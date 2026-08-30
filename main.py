@@ -12,7 +12,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.core.database import init_db
 from app.routers.backtest import router as backtest_router
 from app.routers.agent_router import router as agent_router
+from app.routers.dashboard_router import router as dashboard_router
 from scheduler import start_scheduler, stop_scheduler
+
 
 
 
@@ -52,8 +54,10 @@ app.add_middleware(
 )
 
 # Include routers
+app.include_router(dashboard_router)
 app.include_router(backtest_router)
 app.include_router(agent_router)
+
 
 
 @app.get("/api/health")
