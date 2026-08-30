@@ -5,10 +5,12 @@ description = "AdQuant — High-Performance Autonomous Options Trading Engine po
 readme = "README.md"
 requires-python = ">=3.11,<3.13"
 dependencies = [
-    "fastapi>=0.110.0",
+    "fastapi[standard]>=0.110.0",
+    "fastapi-cli>=0.0.1",
     "uvicorn[standard]>=0.28.0",
     "gunicorn>=21.2.0",
     "pydantic>=2.6.0",
+
     "pandas>=2.0.0",
     "numpy>=1.24.0",
     "scipy>=1.10.0",
