@@ -220,33 +220,41 @@ def get_agent_status():
 @router.get("/positions")
 def get_all_positions(status: Optional[str] = None):
     """Returns position history from PostgreSQL enriched with live price, Greeks, and unrealized PnL."""
-    pool = get_pool()
-    conn = pool.getconn()
     all_snaps = get_all_snapshots()
     try:
-        with conn.cursor() as cur:
-            if status:
-                cur.execute(
-                    "SELECT * FROM positions WHERE status = %s ORDER BY id DESC LIMIT 50;",
-                    (status.lower(),)
-                )
-            else:
-                cur.execute("SELECT * FROM positions ORDER BY id DESC LIMIT 50;")
-            cols = [desc[0] for desc in cur.description]
-            rows = cur.fetchall()
-            unique_syms = list(set([dict(zip(cols, r)).get("symbol") for r in rows if dict(zip(cols, r)).get("symbol")]))
-            live_prices = fetch_alpaca_latest_prices(unique_syms)
+        pool = get_pool()
+        if pool is not None:
+            conn = pool.getconn()
+            try:
+                with conn.cursor() as cur:
+                    if status:
+                        cur.execute(
+                            "SELECT * FROM positions WHERE status = %s ORDER BY id DESC LIMIT 50;",
+                            (status.lower(),)
+                        )
+                    else:
+                        cur.execute("SELECT * FROM positions ORDER BY id DESC LIMIT 50;")
+                    cols = [desc[0] for desc in cur.description]
+                    rows = cur.fetchall()
+                    unique_syms = list(set([dict(zip(cols, r)).get("symbol") for r in rows if dict(zip(cols, r)).get("symbol")]))
+                    live_prices = fetch_alpaca_latest_prices(unique_syms)
 
-            results = []
-            for r in rows:
-                p_dict = dict(zip(cols, r))
-                enriched = _enrich_position(p_dict, live_prices, all_snaps)
-                results.append(enriched)
-                
-            return results
+                    results = []
+                    for r in rows:
+                        p_dict = dict(zip(cols, r))
+                        enriched = _enrich_position(p_dict, live_prices, all_snaps)
+                        results.append(enriched)
+                        
+                    return results
+            finally:
+                pool.putconn(conn)
+    except Exception as e:
+        print(f"[AgentRouter] Notice on get_all_positions: {e}")
 
-    finally:
-        pool.putconn(conn)
+    # Memory fallback
+    open_pos = get_open_positions()
+    return open_pos
+
 
 
 
@@ -335,15 +343,23 @@ def list_strategy_agents():
 
 @router.get("/cycles")
 def get_recent_cycles(limit: int = 20):
-    """Returns recent agent execution cycles from PostgreSQL."""
-    pool = get_pool()
-    conn = pool.getconn()
+    """Returns recent agent execution cycles from PostgreSQL (or memory)."""
     try:
-        with conn.cursor() as cur:
-            cur.execute("SELECT * FROM agent_cycles ORDER BY id DESC LIMIT %s;", (limit,))
-            cols = [desc[0] for desc in cur.description]
-            rows = cur.fetchall()
-            return [dict(zip(cols, r)) for r in rows]
-    finally:
-        pool.putconn(conn)
+        pool = get_pool()
+        if pool is not None:
+            conn = pool.getconn()
+            try:
+                with conn.cursor() as cur:
+                    cur.execute("SELECT * FROM agent_cycles ORDER BY id DESC LIMIT %s;", (limit,))
+                    cols = [desc[0] for desc in cur.description]
+                    rows = cur.fetchall()
+                    return [dict(zip(cols, r)) for r in rows]
+            finally:
+                pool.putconn(conn)
+    except Exception as e:
+        print(f"[AgentRouter] Notice on get_recent_cycles: {e}")
+
+    from app.core.database import _in_memory_cycles
+    return list(reversed(_in_memory_cycles))[:limit]
+
 

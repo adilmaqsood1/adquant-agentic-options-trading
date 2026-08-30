@@ -59,33 +59,37 @@ def fetch_live_alpaca_equity() -> float:
 
 def _reserve_release_allowed() -> bool:
     """Check if 48 hours have passed since last reserve release."""
-    pool = get_pool()
-    conn = pool.getconn()
     try:
-        with conn.cursor() as cur:
-            cur.execute("""
-                SELECT recorded_at FROM portfolio_state 
-                WHERE notes LIKE '%reserve_released%'
-                ORDER BY id DESC LIMIT 1;
-            """)
-            row = cur.fetchone()
-            if not row or not row[0]:
-                return True
-            last_release = row[0]
-            if isinstance(last_release, str):
-                last_release = datetime.datetime.fromisoformat(last_release.replace("Z", "+00:00"))
-            
-            if hasattr(last_release, "tzinfo") and last_release.tzinfo is not None:
-                now = datetime.datetime.now(datetime.timezone.utc)
-            else:
-                now = datetime.datetime.utcnow()
-            hours_elapsed = (now - last_release).total_seconds() / 3600
-            return hours_elapsed >= 48
+        pool = get_pool()
+        if pool is None:
+            return True
+        conn = pool.getconn()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT recorded_at FROM portfolio_state 
+                    WHERE notes LIKE '%reserve_released%'
+                    ORDER BY id DESC LIMIT 1;
+                """)
+                row = cur.fetchone()
+                if not row or not row[0]:
+                    return True
+                last_release = row[0]
+                if isinstance(last_release, str):
+                    last_release = datetime.datetime.fromisoformat(last_release.replace("Z", "+00:00"))
+                
+                if hasattr(last_release, "tzinfo") and last_release.tzinfo is not None:
+                    now = datetime.datetime.now(datetime.timezone.utc)
+                else:
+                    now = datetime.datetime.utcnow()
+                hours_elapsed = (now - last_release).total_seconds() / 3600
+                return hours_elapsed >= 48
+        finally:
+            pool.putconn(conn)
     except Exception as e:
         print(f"[PerformanceManager] Notice checking reserve release: {e}")
         return True
-    finally:
-        pool.putconn(conn)
+
 
 
 def get_active_budget_with_reserve(
@@ -202,22 +206,28 @@ def compute_kelly_score(strategy_id: str, n: int = 10) -> Dict[str, Any]:
         win_rate:          Fraction of winning trades
         consecutive_losses:Running losing streak counter
     """
-    pool = get_pool()
-    conn = pool.getconn()
+    trades = []
     try:
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute("""
-                SELECT realized_pnl, realized_pnl_pct, exit_price, entry_price
-                FROM positions
-                WHERE strategy_id = %s
-                  AND status = 'closed'
-                  AND realized_pnl IS NOT NULL
-                ORDER BY id DESC
-                LIMIT %s;
-            """, (strategy_id, n))
-            trades = cur.fetchall()
-    finally:
-        pool.putconn(conn)
+        pool = get_pool()
+        if pool is not None:
+            conn = pool.getconn()
+            try:
+                with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                    cur.execute("""
+                        SELECT realized_pnl, realized_pnl_pct, exit_price, entry_price
+                        FROM positions
+                        WHERE strategy_id = %s
+                          AND status = 'closed'
+                          AND realized_pnl IS NOT NULL
+                        ORDER BY id DESC
+                        LIMIT %s;
+                    """, (strategy_id, n))
+                    trades = cur.fetchall()
+            finally:
+                pool.putconn(conn)
+    except Exception as e:
+        print(f"[PerformanceManager] Notice on get_strategy_performance: {e}")
+
 
     # Insufficient data — conservative NORMAL at 0.75x until proven
     if len(trades) < 3:
@@ -300,81 +310,95 @@ def update_portfolio_state(current_value: float) -> Dict[str, Any]:
     Updates portfolio_state with current value, refreshes peak, computes drawdown,
     and assigns circuit breaker level.
     """
-    pool = get_pool()
-    conn = pool.getconn()
+    peak_value = current_value
+    drawdown_pct = 0.0
+    cb_level = 0
+
     try:
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute("SELECT * FROM portfolio_state ORDER BY id DESC LIMIT 1;")
-            row = cur.fetchone()
-            peak_value = float(row["peak_value"]) if row else current_value
-            peak_value = max(peak_value, current_value)
+        pool = get_pool()
+        if pool is not None:
+            conn = pool.getconn()
+            try:
+                with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                    cur.execute("SELECT * FROM portfolio_state ORDER BY id DESC LIMIT 1;")
+                    row = cur.fetchone()
+                    peak_value = float(row["peak_value"]) if row else current_value
+                    peak_value = max(peak_value, current_value)
 
-            drawdown_pct = (current_value - peak_value) / peak_value  # will be 0 or negative
+                    drawdown_pct = (current_value - peak_value) / peak_value
 
-            # Determine circuit breaker level
-            if drawdown_pct > -0.03:
-                cb_level = 0
-            elif drawdown_pct > -0.06:
-                cb_level = 1
-            elif drawdown_pct > -0.10:
-                cb_level = 2
-            elif drawdown_pct > -0.15:
-                cb_level = 3
-            else:
-                cb_level = 4
+                    if drawdown_pct > -0.03:
+                        cb_level = 0
+                    elif drawdown_pct > -0.06:
+                        cb_level = 1
+                    elif drawdown_pct > -0.10:
+                        cb_level = 2
+                    elif drawdown_pct > -0.15:
+                        cb_level = 3
+                    else:
+                        cb_level = 4
 
-            cur.execute("""
-                INSERT INTO portfolio_state (portfolio_value, peak_value, drawdown_pct, circuit_breaker_level)
-                VALUES (%s, %s, %s, %s);
-            """, (round(current_value, 2), round(peak_value, 2), round(drawdown_pct, 6), cb_level))
-            conn.commit()
+                    cur.execute("""
+                        INSERT INTO portfolio_state (portfolio_value, peak_value, drawdown_pct, circuit_breaker_level)
+                        VALUES (%s, %s, %s, %s);
+                    """, (round(current_value, 2), round(peak_value, 2), round(drawdown_pct, 6), cb_level))
+                    conn.commit()
+            finally:
+                pool.putconn(conn)
+    except Exception as e:
+        print(f"[PerformanceManager] Notice on update_portfolio_state: {e}")
 
-        cb_info = CIRCUIT_BREAKER_LEVELS.get(cb_level, CIRCUIT_BREAKER_LEVELS[0])
-        return {
-            "portfolio_value": round(current_value, 2),
-            "peak_value": round(peak_value, 2),
-            "drawdown_pct": round(drawdown_pct * 100, 4),
-            "circuit_breaker_level": cb_level,
-            "circuit_breaker_label": cb_info["label"],
-            "circuit_breaker_action": cb_info["action"],
-            "cb_multiplier": cb_info["cb_multiplier"],
-        }
-    finally:
-        pool.putconn(conn)
+    cb_info = CIRCUIT_BREAKER_LEVELS.get(cb_level, CIRCUIT_BREAKER_LEVELS[0])
+    return {
+        "portfolio_value": round(current_value, 2),
+        "peak_value": round(peak_value, 2),
+        "drawdown_pct": round(drawdown_pct * 100, 4),
+        "circuit_breaker_level": cb_level,
+        "circuit_breaker_label": cb_info["label"],
+        "circuit_breaker_action": cb_info["action"],
+        "cb_multiplier": cb_info["cb_multiplier"],
+    }
 
 
 def get_current_circuit_breaker() -> Dict[str, Any]:
     """Returns the latest circuit breaker state without updating."""
-    pool = get_pool()
-    conn = pool.getconn()
+    live_eq = fetch_live_alpaca_equity()
     try:
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute("SELECT * FROM portfolio_state ORDER BY id DESC LIMIT 1;")
-            row = cur.fetchone()
-            if not row:
-                live_eq = fetch_live_alpaca_equity()
-                return {
-                    "circuit_breaker_level": 0,
-                    "cb_multiplier": 1.0,
-                    "drawdown_pct": 0.0,
-                    "portfolio_value": live_eq,
-                    "peak_value": live_eq,
-                    "circuit_breaker_label": "Green (Normal)",
-                    "action": "Full normal operation"
-                }
-            cb_level = int(row["circuit_breaker_level"])
-            cb_info = CIRCUIT_BREAKER_LEVELS.get(cb_level, CIRCUIT_BREAKER_LEVELS[0])
-            return {
-                "portfolio_value": float(row["portfolio_value"]),
-                "peak_value": float(row["peak_value"]),
-                "drawdown_pct": float(row["drawdown_pct"]) * 100,
-                "circuit_breaker_level": cb_level,
-                "circuit_breaker_label": cb_info["label"],
-                "cb_multiplier": cb_info["cb_multiplier"],
-                "action": cb_info["action"],
-            }
-    finally:
-        pool.putconn(conn)
+        pool = get_pool()
+        if pool is not None:
+            conn = pool.getconn()
+            try:
+                with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                    cur.execute("SELECT * FROM portfolio_state ORDER BY id DESC LIMIT 1;")
+                    row = cur.fetchone()
+                    if row:
+                        cb_level = int(row["circuit_breaker_level"])
+                        cb_info = CIRCUIT_BREAKER_LEVELS.get(cb_level, CIRCUIT_BREAKER_LEVELS[0])
+                        drawdown_pct = float(row["drawdown_pct"]) * 100.0 if row["drawdown_pct"] is not None else 0.0
+                        return {
+                            "circuit_breaker_level": cb_level,
+                            "cb_multiplier": cb_info["cb_multiplier"],
+                            "drawdown_pct": round(drawdown_pct, 4),
+                            "portfolio_value": float(row["portfolio_value"]),
+                            "peak_value": float(row["peak_value"]),
+                            "circuit_breaker_label": cb_info["label"],
+                            "action": cb_info["action"]
+                        }
+            finally:
+                pool.putconn(conn)
+    except Exception as e:
+        print(f"[PerformanceManager] Notice on get_current_circuit_breaker: {e}")
+
+    return {
+        "circuit_breaker_level": 0,
+        "cb_multiplier": 1.0,
+        "drawdown_pct": 0.0,
+        "portfolio_value": live_eq,
+        "peak_value": live_eq,
+        "circuit_breaker_label": "Green (Normal)",
+        "action": "Full normal operation"
+    }
+
 
 
 # ═════════════════════════════════════════════════════════════════════════════════
@@ -566,64 +590,75 @@ def upsert_strategy_performance(strategy_id: str) -> Dict[str, Any]:
     """
     kelly = compute_kelly_score(strategy_id)
 
-    pool = get_pool()
-    conn = pool.getconn()
     try:
-        with conn.cursor() as cur:
-            cur.execute("""
-                INSERT INTO strategy_performance
-                    (strategy_id, mode, kelly_pct, quarter_kelly_pct, win_rate, avg_win_pct,
-                     avg_loss_pct, win_loss_ratio, total_trades, winning_trades, losing_trades,
-                     consecutive_wins, consecutive_losses, size_multiplier, last_updated)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s, NOW())
-                ON CONFLICT (strategy_id) DO UPDATE SET
-                    mode               = EXCLUDED.mode,
-                    kelly_pct          = EXCLUDED.kelly_pct,
-                    quarter_kelly_pct  = EXCLUDED.quarter_kelly_pct,
-                    win_rate           = EXCLUDED.win_rate,
-                    avg_win_pct        = EXCLUDED.avg_win_pct,
-                    avg_loss_pct       = EXCLUDED.avg_loss_pct,
-                    win_loss_ratio     = EXCLUDED.win_loss_ratio,
-                    total_trades       = EXCLUDED.total_trades,
-                    winning_trades     = EXCLUDED.winning_trades,
-                    losing_trades      = EXCLUDED.losing_trades,
-                    consecutive_wins   = EXCLUDED.consecutive_wins,
-                    consecutive_losses = EXCLUDED.consecutive_losses,
-                    size_multiplier    = EXCLUDED.size_multiplier,
-                    last_updated       = NOW();
-            """, (
-                strategy_id,
-                kelly["mode"],
-                kelly["kelly_pct"],
-                kelly["quarter_kelly_pct"],
-                kelly["win_rate"],
-                kelly["avg_win_pct"],
-                kelly["avg_loss_pct"],
-                kelly["win_loss_ratio"],
-                kelly["total_trades"],
-                kelly["winning_trades"],
-                kelly["losing_trades"],
-                kelly.get("consecutive_wins", 0),
-                kelly.get("consecutive_losses", 0),
-                kelly["size_multiplier"],
-            ))
-            conn.commit()
-    finally:
-        pool.putconn(conn)
+        pool = get_pool()
+        if pool is not None:
+            conn = pool.getconn()
+            try:
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        INSERT INTO strategy_performance
+                            (strategy_id, mode, kelly_pct, quarter_kelly_pct, win_rate, avg_win_pct,
+                             avg_loss_pct, win_loss_ratio, total_trades, winning_trades, losing_trades,
+                             consecutive_wins, consecutive_losses, size_multiplier, last_updated)
+                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s, NOW())
+                        ON CONFLICT (strategy_id) DO UPDATE SET
+                            mode               = EXCLUDED.mode,
+                            kelly_pct          = EXCLUDED.kelly_pct,
+                            quarter_kelly_pct  = EXCLUDED.quarter_kelly_pct,
+                            win_rate           = EXCLUDED.win_rate,
+                            avg_win_pct        = EXCLUDED.avg_win_pct,
+                            avg_loss_pct       = EXCLUDED.avg_loss_pct,
+                            win_loss_ratio     = EXCLUDED.win_loss_ratio,
+                            total_trades       = EXCLUDED.total_trades,
+                            winning_trades     = EXCLUDED.winning_trades,
+                            losing_trades      = EXCLUDED.losing_trades,
+                            consecutive_wins   = EXCLUDED.consecutive_wins,
+                            consecutive_losses = EXCLUDED.consecutive_losses,
+                            size_multiplier    = EXCLUDED.size_multiplier,
+                            last_updated       = NOW();
+                    """, (
+                        strategy_id,
+                        kelly["mode"],
+                        kelly["kelly_pct"],
+                        kelly["quarter_kelly_pct"],
+                        kelly["win_rate"],
+                        kelly["avg_win_pct"],
+                        kelly["avg_loss_pct"],
+                        kelly["win_loss_ratio"],
+                        kelly["total_trades"],
+                        kelly["winning_trades"],
+                        kelly["losing_trades"],
+                        kelly.get("consecutive_wins", 0),
+                        kelly.get("consecutive_losses", 0),
+                        kelly["size_multiplier"],
+                    ))
+                    conn.commit()
+            finally:
+                pool.putconn(conn)
+    except Exception as e:
+        print(f"[PerformanceManager] Notice on upsert_strategy_performance: {e}")
 
     return kelly
 
 
 def get_all_strategy_performance() -> List[Dict[str, Any]]:
     """Returns all strategy_performance rows for dashboard display."""
-    pool = get_pool()
-    conn = pool.getconn()
     try:
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute("SELECT * FROM strategy_performance ORDER BY mode, strategy_id;")
-            return [dict(r) for r in cur.fetchall()]
-    finally:
-        pool.putconn(conn)
+        pool = get_pool()
+        if pool is not None:
+            conn = pool.getconn()
+            try:
+                with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                    cur.execute("SELECT * FROM strategy_performance ORDER BY mode, strategy_id;")
+                    return [dict(r) for r in cur.fetchall()]
+            finally:
+                pool.putconn(conn)
+    except Exception as e:
+        print(f"[PerformanceManager] Notice on get_all_strategy_performance: {e}")
+
+    return []
+
 
 
 def get_portfolio_health_report() -> Dict[str, Any]:

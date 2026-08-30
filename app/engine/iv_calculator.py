@@ -119,32 +119,38 @@ def update_iv_history(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
     Runs for equity symbols every daily cycle.
     Inserts fresh snapshot into options_iv_history table in PostgreSQL.
     """
-    pool = get_pool()
-    conn = pool.getconn()
     results = {}
-    try:
-        with conn.cursor() as cur:
-            for s in symbols:
-                clean_s = s.upper().replace("/", "")
-                iv_info = compute_iv_rank(clean_s)
-                results[clean_s] = iv_info
+    for s in symbols:
+        clean_s = s.upper().replace("/", "")
+        iv_info = compute_iv_rank(clean_s)
+        results[clean_s] = iv_info
 
-                cur.execute("""
-                    INSERT INTO options_iv_history (
-                        underlying_symbol, iv_30d, iv_rank, iv_percentile,
-                        hv_20, hv_60, regime, recorded_at
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, NOW());
-                """, (
-                    clean_s,
-                    iv_info["iv_30d"],
-                    iv_info["iv_rank"],
-                    iv_info["iv_percentile"],
-                    iv_info["hv_20"],
-                    iv_info["hv_60"],
-                    iv_info["regime"]
-                ))
-            conn.commit()
-    finally:
-        pool.putconn(conn)
+    try:
+        pool = get_pool()
+        if pool is not None:
+            conn = pool.getconn()
+            try:
+                with conn.cursor() as cur:
+                    for clean_s, iv_info in results.items():
+                        cur.execute("""
+                            INSERT INTO options_iv_history (
+                                underlying_symbol, iv_30d, iv_rank, iv_percentile,
+                                hv_20, hv_60, regime, recorded_at
+                            ) VALUES (%s, %s, %s, %s, %s, %s, %s, NOW());
+                        """, (
+                            clean_s,
+                            iv_info["iv_30d"],
+                            iv_info["iv_rank"],
+                            iv_info["iv_percentile"],
+                            iv_info["hv_20"],
+                            iv_info["hv_60"],
+                            iv_info["regime"]
+                        ))
+                    conn.commit()
+            finally:
+                pool.putconn(conn)
+    except Exception as e:
+        print(f"[IVCalculator] Notice on update_iv_history: {e}")
 
     return results
+
