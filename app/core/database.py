@@ -59,14 +59,19 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 def init_db() -> None:
     """
     Creates both 'positions' and 'agent_cycles' tables if they don't exist.
-    Called once on startup.
+    Called once on startup. Gracefully handles unreachable database in cloud/local environments.
     """
     try:
-        from app.db.models import Base
-    except ImportError:
-        from db.models import Base
-    Base.metadata.create_all(bind=engine)
-    print("[Database] init_db() executed successfully. Tables 'positions' and 'agent_cycles' verified.")
+        try:
+            from app.db.models import Base
+        except ImportError:
+            from db.models import Base
+        Base.metadata.create_all(bind=engine)
+        print("[Database] init_db() executed successfully. Tables 'positions' and 'agent_cycles' verified.")
+    except Exception as exc:
+        print(f"[Database] ⚠️ Database connection notice (PostgreSQL unreachable on {DB_HOST}:{DB_PORT}): {exc}")
+        print("[Database] 💡 To enable persistent Postgres storage, set DATABASE_URL in your cloud environment variables.")
+
 
 
 

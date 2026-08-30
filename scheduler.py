@@ -93,7 +93,11 @@ def start_scheduler(run_immediately: bool = True) -> BackgroundScheduler:
         print("[SCHEDULER] BackgroundScheduler is already running.")
         return _global_scheduler
 
-    init_db()
+    try:
+        init_db()
+    except Exception as exc:
+        print(f"[SCHEDULER] Database init notice: {exc}")
+
 
     scheduler = BackgroundScheduler(timezone="UTC")
 
