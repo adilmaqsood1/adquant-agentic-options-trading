@@ -1,6 +1,11 @@
 import os
-import uvicorn
+import sys
 from contextlib import asynccontextmanager
+
+# Ensure root directory is always on Python path
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -8,6 +13,7 @@ from app.core.database import init_db
 from app.routers.backtest import router as backtest_router
 from app.routers.agent_router import router as agent_router
 from scheduler import start_scheduler, stop_scheduler
+
 
 
 @asynccontextmanager
