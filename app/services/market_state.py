@@ -4,8 +4,12 @@ import datetime
 import pandas as pd
 from typing import Dict, List, Optional, Any
 
-from app.data.adapter import get_data
-from app.data.kaggle_source import POSSIBLE_PATHS
+try:
+    from app.data.adapter import get_data
+    from app.data.kaggle_source import POSSIBLE_PATHS
+except ImportError:
+    from data.adapter import get_data
+    from data.kaggle_source import POSSIBLE_PATHS
 
 # ─────────────────────────────────────────────────────────────────────────────
 # ─────────────────────────────────────────────────────────────────────────────

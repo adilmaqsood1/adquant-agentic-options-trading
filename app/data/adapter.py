@@ -4,8 +4,12 @@ import pandas as pd
 import numpy as np
 from typing import Optional
 
-from app.data.kaggle_source import load_kaggle_data, POSSIBLE_PATHS
-from app.data.alpaca_source import fetch_alpaca_stock_bars  
+try:
+    from app.data.kaggle_source import load_kaggle_data, POSSIBLE_PATHS
+    from app.data.alpaca_source import fetch_alpaca_stock_bars
+except ImportError:
+    from data.kaggle_source import load_kaggle_data, POSSIBLE_PATHS
+    from data.alpaca_source import fetch_alpaca_stock_bars
 
 CACHE_DIR = os.path.join(os.path.dirname(__file__), "cache")
 os.makedirs(CACHE_DIR, exist_ok=True)
