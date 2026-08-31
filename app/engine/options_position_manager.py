@@ -93,6 +93,31 @@ def open_options_position(
     except Exception as e:
         print(f"[OptionsPositionManager] Notice on open_options_position: {e}")
 
+    # Sync to Supabase REST
+    try:
+        from app.core.database import get_supabase_client
+        supa = get_supabase_client()
+        if supa:
+            payload = {
+                "strategy_id": contract_spec.get("strategy_id", "options_core"),
+                "underlying_symbol": contract_spec.get("underlying_symbol", "SPY"),
+                "occ_symbol": contract_spec.get("occ_symbol", "UNKNOWN"),
+                "contract_type": contract_spec.get("contract_type", "call"),
+                "strategy_type": contract_spec.get("strategy_type", "long_call"),
+                "strike_price": float(contract_spec.get("strike_price") or 100.0),
+                "expiry_date": str(contract_spec.get("expiry_date") or "2026-10-02"),
+                "dte_at_entry": int(contract_spec.get("dte_at_entry") or 30),
+                "underlying_price": float(contract_spec.get("underlying_price") or 100.0),
+                "premium_paid": float(contract_spec.get("premium_paid") or 5.0),
+                "contracts_qty": int(contract_spec.get("contracts_qty") or 1),
+                "total_cost": float(contract_spec.get("total_cost") or 500.0),
+                "multiplier": 100,
+                "status": "open"
+            }
+            supa.table("options_contracts").insert(payload).execute()
+    except Exception:
+        pass
+
     return 1
 
 
@@ -153,7 +178,30 @@ def close_options_position(
     except Exception as e:
         print(f"[OptionsPositionManager] Notice on close_options_position: {e}")
 
-    return None
+def update_options_trail_stop(occ_symbol: str, trail_stop_floor_pct: float, trail_stop_premium: float) -> bool:
+    """
+    Persists an active trailing stop profit floor to PostgreSQL options_contracts.
+    """
+    try:
+        pool = get_pool()
+        if pool is not None:
+            conn = pool.getconn()
+            try:
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        ALTER TABLE options_contracts ADD COLUMN IF NOT EXISTS trail_stop_floor_pct NUMERIC DEFAULT 0.0;
+                        ALTER TABLE options_contracts ADD COLUMN IF NOT EXISTS trail_stop_premium NUMERIC DEFAULT 0.0;
+                        UPDATE options_contracts 
+                        SET trail_stop_floor_pct = %s, trail_stop_premium = %s
+                        WHERE occ_symbol = %s AND status = 'open';
+                    """, (round(trail_stop_floor_pct, 2), round(trail_stop_premium, 4), occ_symbol))
+                    conn.commit()
+                    return True
+            finally:
+                pool.putconn(conn)
+    except Exception as e:
+        print(f"[OptionsPositionManager] Notice on update_options_trail_stop: {e}")
+    return False
 
 
 def get_open_options_positions() -> List[Dict[str, Any]]:

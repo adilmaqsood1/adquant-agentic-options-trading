@@ -108,46 +108,29 @@ def run_options_monitor_cycle(
         prem_pnl = live_opt_prem - entry_prem
         prem_pnl_pct = (prem_pnl / entry_prem * 100.0) if entry_prem > 0 else 0.0
 
-        # --- EVALUATE EXITS IN STRICT PRIORITY ORDER ---
-        exit_reason = None
-        exit_details = ""
-
-        # EXIT 3 (CHECKED FIRST): Time Stop at 14 DTE
-        if dte <= 14:
-            exit_reason = "time_stop_14_dte"
-            exit_details = f"DTE reached {dte} (<=14 DTE threshold). Force closed to eliminate exponential theta decay."
-
-        # EXIT 1: Profit Target (+60% long options, +40% spreads, +50% short puts)
-        elif strategy_type in ["long_call", "long_put"] and prem_pnl_pct >= 60.0:
-            exit_reason = "profit_target_60pct"
-            exit_details = f"Profit target reached (+{prem_pnl_pct:.1f}% >= +60.0% target). Took money off the table."
-        elif "spread" in strategy_type and prem_pnl_pct >= 40.0:
-            exit_reason = "profit_target_spread_40pct"
-            exit_details = f"Spread profit target reached (+{prem_pnl_pct:.1f}% >= +40.0%)."
-        elif strategy_type == "short_put" and prem_pnl_pct >= 50.0:
-            exit_reason = "profit_target_short_put_50pct"
-            exit_details = f"Short put captured 50% decay credit (+{prem_pnl_pct:.1f}%)."
-
-        # EXIT 2: Stop Loss (-35% long options, -50% spreads, 4% underlying drop on short puts)
-        elif strategy_type in ["long_call", "long_put"] and prem_pnl_pct <= -35.0:
-            exit_reason = "stop_loss_35pct"
-            exit_details = f"Stop loss triggered ({prem_pnl_pct:.1f}% <= -35.0% stop). Cut loser fast."
-        elif "spread" in strategy_type and prem_pnl_pct <= -50.0:
-            exit_reason = "stop_loss_spread_50pct"
-            exit_details = f"Spread max loss stop triggered ({prem_pnl_pct:.1f}% <= -50.0%)."
-        elif strategy_type == "short_put" and strike > 0 and (underlying_px < strike * 0.96):
-            exit_reason = "stop_loss_short_put_underlying_drop"
-            exit_details = f"Underlying dropped 4% below short strike (${underlying_px:.2f} < ${strike * 0.96:.2f})."
-
-        # EXIT 4: Signal Reversal
-        elif current_signals:
+        # Extract opposing strategy signal if present
+        opposing_sig = None
+        if current_signals:
             for sig in current_signals:
                 if sig.get("symbol", "").upper() == sym:
-                    sig_type = sig.get("signal_type", "").upper()
-                    if ("SELL" in sig_type or "BEAR" in sig_type or "EXIT" in sig_type) and opt_type == "call":
-                        exit_reason = "signal_reversal"
-                        exit_details = f"Quantitative model {strategy_id} generated opposite signal ({sig_type}). Closed immediately."
-                        break
+                    opposing_sig = sig.get("signal_type", "")
+                    break
+
+        # --- EVALUATE WITH HYBRID DEEPSEEK-V3.2 EXIT GUARDIAN ---
+        from app.engine.options_exit_guardian import evaluate_position_exit_with_ai
+        guardian_eval = evaluate_position_exit_with_ai(
+            position=p,
+            live_premium=live_opt_prem,
+            underlying_price=underlying_px,
+            current_dte=dte,
+            greeks=greeks,
+            market_regime="SIDEWAYS_CONSOLIDATION",
+            opposing_signal=opposing_sig
+        )
+
+        should_close = guardian_eval.get("should_close", False)
+        exit_reason = guardian_eval.get("exit_reason") if should_close else None
+        exit_details = guardian_eval.get("reasoning", "")
 
         # Execute Exit if Triggered
         if exit_reason:

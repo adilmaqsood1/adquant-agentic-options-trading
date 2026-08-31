@@ -550,6 +550,28 @@ def get_portfolio_summary(current_prices: Optional[Dict[str, float]] = None) -> 
     }
 
 
+_supabase_client = None
+
+
+def get_supabase_client():
+    """
+    Initializes and returns a singleton Supabase REST client using SUPABASE_URL and key.
+    """
+    global _supabase_client
+    if _supabase_client is not None:
+        return _supabase_client
+    try:
+        supabase_url = os.getenv("SUPABASE_URL")
+        supabase_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_KEY")
+        if supabase_url and supabase_key:
+            from supabase import create_client
+            _supabase_client = create_client(supabase_url, supabase_key)
+            return _supabase_client
+    except Exception as e:
+        print(f"[Database] Supabase client init notice: {e}")
+    return None
+
+
 def log_cycle(
     timeframe_scope: str,
     symbols_scanned: int,
@@ -562,11 +584,31 @@ def log_cycle(
     cycle_time: Optional[datetime.datetime] = None
 ) -> Dict[str, Any]:
     """
-    Inserts one row into agent_cycles. Called at end of every orchestrator run.
+    Inserts one row into agent_cycles table in Supabase / PostgreSQL.
     """
     if cycle_time is None:
         cycle_time = datetime.datetime.utcnow()
 
+    # 1. Try Supabase REST Client
+    supa = get_supabase_client()
+    if supa:
+        try:
+            payload = {
+                "cycle_time": cycle_time.isoformat() if isinstance(cycle_time, datetime.datetime) else str(cycle_time),
+                "timeframe_scope": timeframe_scope.upper(),
+                "symbols_scanned": int(symbols_scanned),
+                "signals_detected": int(signals_detected),
+                "groq_approved": int(groq_approved),
+                "risk_approved": int(risk_approved),
+                "orders_placed": int(orders_placed),
+                "portfolio_value": float(portfolio_value),
+                "notes": notes
+            }
+            supa.table("agent_cycles").insert(payload).execute()
+        except Exception as supa_err:
+            pass
+
+    # 2. Try direct PostgreSQL pool
     pool = get_pool()
     if pool is not None:
         try:
