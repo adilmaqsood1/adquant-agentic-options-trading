@@ -2,8 +2,12 @@ import os
 import sys
 from contextlib import asynccontextmanager
 
-# Ensure root directory is always on Python path
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# Ensure root and app directories are always in Python path
+ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
+APP_DIR = os.path.join(ROOT_DIR, "app")
+for p in [ROOT_DIR, APP_DIR]:
+    if p not in sys.path:
+        sys.path.insert(0, p)
 
 import uvicorn
 from fastapi import FastAPI
