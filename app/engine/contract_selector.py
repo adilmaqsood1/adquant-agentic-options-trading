@@ -83,46 +83,91 @@ def select_contract(
         contract_type = "call"
         target_delta = 0.68
 
-    # 3. Expiration Selection: 30-35 DTE Sweet Spot (Nearest Friday)
+    # 3. Expiration & Strike Selection (Prioritizes real listed Alpaca option contracts)
     today = datetime.date.today()
     target_dte_days = 32
-    raw_expiry = today + datetime.timedelta(days=target_dte_days)
-    days_to_friday = (4 - raw_expiry.weekday()) % 7
-    expiry_date = raw_expiry + datetime.timedelta(days=days_to_friday)
-    actual_dte = max(21, min(45, (expiry_date - today).days))
-    T = actual_dte / 365.0
+    real_contract = None
+    try:
+        from dotenv import load_dotenv
+        import requests, os
+        load_dotenv(override=True)
+        alpaca_key = os.getenv("ALPACA_API_KEY")
+        alpaca_sec = os.getenv("ALPACA_API_SECRET")
+        alpaca_base = (os.getenv("ALPACA_BASE_URL") or "https://paper-api.alpaca.markets/v2").rstrip("/")
 
-    # 4. Strike Selection Grid
-    if underlying_price < 25:
-        step = 0.50
-    elif underlying_price < 100:
-        step = 1.00
-    elif underlying_price < 250:
-        step = 2.50
-    elif underlying_price < 500:
-        step = 5.00
+        if alpaca_key and alpaca_sec:
+            headers = {"APCA-API-KEY-ID": alpaca_key, "APCA-API-SECRET-KEY": alpaca_sec}
+            exp_min = (today + datetime.timedelta(days=21)).isoformat()
+            exp_max = (today + datetime.timedelta(days=45)).isoformat()
+            params = {
+                "underlying_symbols": symbol,
+                "status": "active",
+                "type": "call" if contract_type == "call" else "put",
+                "expiration_date_gte": exp_min,
+                "expiration_date_lte": exp_max,
+                "limit": 100
+            }
+            r = requests.get(f"{alpaca_base}/options/contracts", headers=headers, params=params, timeout=4)
+            if r.status_code == 200:
+                contracts = r.json().get("option_contracts", [])
+                if contracts:
+                    ideal_strike_target = underlying_price * (0.96 if contract_type == "call" else 1.04)
+                    def score_c(c):
+                        stk = float(c.get("strike_price") or 0.0)
+                        exp_d = datetime.date.fromisoformat(c.get("expiration_date"))
+                        d_rem = (exp_d - today).days
+                        strike_diff = abs(stk - ideal_strike_target) / underlying_price
+                        dte_diff = abs(d_rem - target_dte_days)
+                        return strike_diff * 100 + dte_diff * 0.5
+
+                    sorted_c = sorted(contracts, key=score_c)
+                    real_contract = sorted_c[0]
+    except Exception as e:
+        print(f"[ContractSelector] Alpaca live option notice: {e}")
+
+    if real_contract:
+        occ_symbol = real_contract.get("symbol")
+        strike_price = float(real_contract.get("strike_price"))
+        expiry_date = datetime.date.fromisoformat(real_contract.get("expiration_date"))
+        actual_dte = max(21, min(45, (expiry_date - today).days))
+        T = actual_dte / 365.0
     else:
-        step = 10.00
+        # Fallback to Mathematical Strike & Expiry
+        raw_expiry = today + datetime.timedelta(days=target_dte_days)
+        days_to_friday = (4 - raw_expiry.weekday()) % 7
+        expiry_date = raw_expiry + datetime.timedelta(days=days_to_friday)
+        actual_dte = max(21, min(45, (expiry_date - today).days))
+        T = actual_dte / 365.0
 
-    min_k = round(underlying_price * 0.80 / step) * step
-    max_k = round(underlying_price * 1.20 / step) * step
-    k_range = [round(min_k + i * step, 2) for i in range(int(round((max_k - min_k) / step)) + 1)]
+        if underlying_price < 25:
+            step = 0.50
+        elif underlying_price < 100:
+            step = 1.00
+        elif underlying_price < 250:
+            step = 2.50
+        elif underlying_price < 500:
+            step = 5.00
+        else:
+            step = 10.00
 
-    # Select Primary Strike
-    if strategy_type == "short_put":
-        # 5-7% OTM below spot price
-        ideal_strike = underlying_price * 0.94
-        strike_price = round(round(ideal_strike / step) * step, 2)
-    else:
-        strike_price = BlackScholesEngine.find_strike_by_delta(
-            S=underlying_price,
-            K_range=k_range,
-            T=T,
-            r=0.045,
-            sigma=sigma,
-            target_delta=target_delta,
-            option_type=contract_type
-        )
+        min_k = round(underlying_price * 0.80 / step) * step
+        max_k = round(underlying_price * 1.20 / step) * step
+        k_range = [round(min_k + i * step, 2) for i in range(int(round((max_k - min_k) / step)) + 1)]
+
+        if strategy_type == "short_put":
+            ideal_strike = underlying_price * 0.94
+            strike_price = round(round(ideal_strike / step) * step, 2)
+        else:
+            strike_price = BlackScholesEngine.find_strike_by_delta(
+                S=underlying_price,
+                K_range=k_range,
+                T=T,
+                r=0.045,
+                sigma=sigma,
+                target_delta=target_delta,
+                option_type=contract_type
+            )
+        occ_symbol = generate_occ_symbol(symbol=symbol, expiry_date=expiry_date, strike=strike_price, contract_type=contract_type)
 
     # 5. Greeks & Pricing
     greeks = BlackScholesEngine.calculate_greeks(

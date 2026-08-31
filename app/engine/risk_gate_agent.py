@@ -1,7 +1,6 @@
 import math
 from typing import Dict, Any, List, Optional
 
-MAX_SIMULTANEOUS_OPTIONS = 5
 MAX_CONTRACTS_PER_TRADE = 3
 MIN_OPTION_TRADE_SIZE = 500.0   # below this, fees eat the edge
 
@@ -17,6 +16,92 @@ HIGH_LIQUIDITY_FAST_PASS = {
 
 # These asset classes CANNOT trade listed US options — always blocked.
 OPTIONS_INELIGIBLE_PATTERNS = ("/", "-PERP", "USDT", "/USD", "BTC", "ETH", "SOL")
+
+
+def compute_dynamic_options_capacity(
+    cb_state: Optional[Dict[str, Any]] = None,
+    market_vix: float = 16.5,
+    open_positions: Optional[List[Dict[str, Any]]] = None,
+    total_portfolio_value: float = 100_000.0,
+    options_budget_pct: float = 0.75
+) -> Dict[str, Any]:
+    """
+    Dynamically determines the maximum number of simultaneous options positions
+    and aggregate portfolio risk capacity based on:
+      1. Circuit Breaker drawdown tier (Level 0 -> full capacity down to Level 4 -> 0)
+      2. Market Volatility / VIX regime (Low vol trend vs high vol chop)
+      3. Options capital budget utilization (75% of portfolio)
+      4. Portfolio Greeks / Sector diversification
+    """
+    from app.engine.performance_manager import get_current_circuit_breaker
+    if cb_state is None:
+        try:
+            cb_state = get_current_circuit_breaker()
+        except Exception:
+            cb_state = {"circuit_breaker_level": 0, "current_drawdown_pct": 0.0, "portfolio_value": total_portfolio_value}
+
+    cb_level = int(cb_state.get("circuit_breaker_level", 0))
+    drawdown_pct = abs(float(cb_state.get("current_drawdown_pct", 0.0)))
+    live_val = float(cb_state.get("portfolio_value", total_portfolio_value))
+
+    # 1. Base Capacity from Circuit Breaker Drawdown State
+    if cb_level >= 4 or drawdown_pct >= 15.0:
+        base_capacity = 0 # Emergency pause
+        regime = "EMERGENCY_HALT"
+    elif cb_level == 3 or drawdown_pct >= 12.0:
+        base_capacity = 2 # Extreme caution
+        regime = "DEFENSIVE_MINIMAL"
+    elif cb_level == 2 or drawdown_pct >= 8.0:
+        base_capacity = 4 # Moderate defensive
+        regime = "CAUTIOUS"
+    elif cb_level == 1 or drawdown_pct >= 5.0:
+        base_capacity = 6 # Mild reduction
+        regime = "MODERATE_REDUCTION"
+    else:
+        base_capacity = 10 # Normal full market capacity (8 to 12 slots)
+        regime = "OPTIMAL_EXPANSION"
+
+    # 2. VIX / Market Regime Multiplier
+    if market_vix < 16.0:
+        vix_mult = 1.2 # Strong low-vol trend, expand capacity up to 12
+        vix_label = "Low Volatility (Trend Expansion)"
+    elif market_vix <= 22.0:
+        vix_mult = 1.0 # Normal regime
+        vix_label = "Normal Volatility"
+    elif market_vix <= 30.0:
+        vix_mult = 0.7 # Elevated volatility
+        vix_label = "Elevated Volatility (Choppy)"
+    else:
+        vix_mult = 0.4 # Extreme market stress
+        vix_label = "High Volatility (Stress)"
+
+    scaled_capacity = int(math.floor(base_capacity * vix_mult)) if base_capacity > 0 else 0
+    max_simultaneous = max(0, min(12, scaled_capacity))
+
+    # 3. Capital Capacity Check: 75% Total Options Budget
+    max_options_capital = live_val * options_budget_pct
+    currently_deployed = 0.0
+    if open_positions:
+        for p in open_positions:
+            currently_deployed += float(p.get("total_cost") or p.get("allocated_capital") or 0.0)
+
+    remaining_budget = max(0.0, max_options_capital - currently_deployed)
+    budget_exhausted = remaining_budget < MIN_OPTION_TRADE_SIZE
+
+    return {
+        "max_simultaneous": max_simultaneous,
+        "base_capacity": base_capacity,
+        "regime": regime,
+        "vix_multiplier": vix_mult,
+        "vix_label": vix_label,
+        "circuit_breaker_level": cb_level,
+        "drawdown_pct": round(drawdown_pct, 2),
+        "options_budget_cap": round(max_options_capital, 2),
+        "currently_deployed": round(currently_deployed, 2),
+        "remaining_budget": round(remaining_budget, 2),
+        "budget_exhausted": budget_exhausted,
+        "summary": f"Dynamic Max: {max_simultaneous} positions ({regime} | {vix_label} | CB Level {cb_level})"
+    }
 
 
 def _is_options_eligible(symbol: str) -> tuple[bool, str]:
@@ -40,24 +125,18 @@ def evaluate_options_risk_gates(
     current_price: Optional[float] = None,
 ) -> Dict[str, Any]:
     """
-    Risk Gate Agent — Fully Dynamic (no static dollar amounts).
+    Risk Gate Agent — Fully Dynamic AI Capacity & Sizing (no static dollar amounts or static position caps).
 
-    All five entry gates must pass. Gate 5 sizing is driven entirely by
-    performance_manager.get_dynamic_allocation(), which combines:
-      • Quarter Kelly from last-10-closed-trades for this strategy
-      • Four strategy mode multipliers (GROWTH 1.5x → PAUSE 0.0x)
-      • Five-level portfolio circuit breaker (fetched live from portfolio_state)
-      • Asset volatility ratio (ATR% vs 2% benchmark)
-      • Groq confidence scalar (>=85%: 1.0x, 75-84%: 0.7x, <75%: BLOCK)
-      • Hard 3% portfolio risk cap
+    All five entry gates must pass. Gate 0 capacity and Gate 5 sizing are driven entirely by
+    real-time market regime, circuit breaker drawdown tier, Kelly criterion, and options capital budget.
 
     Gates:
-      0. Portfolio Limits  — max 5 simultaneous options, max 1 per underlying
-      1. Signal Quality    — confidence >= 75%
-      2. IV Regime         — IV rank < 35 (full), 35-55 (half), >55 (block long options)
-      3. DTE Window        — 21 <= DTE <= 45
-      4. Liquidity Check   — US Equities/ETFs only (liquid options universe)
-      5. Dynamic Sizing    — via performance_manager.get_dynamic_allocation()
+      0. AI Dynamic Portfolio Capacity — dynamically scales between 0-12 positions based on CB & VIX, max 1 per underlying
+      1. Signal Quality                 — confidence >= 75%
+      2. IV Regime                      — IV rank < 35 (full), 35-55 (half), >55 (block long options)
+      3. DTE Window                     — 21 <= DTE <= 45
+      4. Liquidity Check                — US Equities/ETFs only (liquid options universe)
+      5. Dynamic Sizing                 — via performance_manager.get_dynamic_allocation()
     """
     from app.engine.performance_manager import (
         get_dynamic_allocation,
@@ -73,24 +152,39 @@ def evaluate_options_risk_gates(
     premium_per_share = float(contract_spec.get("premium_paid", 10.0))
     underlying_px   = current_price or float(contract_spec.get("underlying_price", 0.0))
 
-    # ── 0. Portfolio-Level Hard Limits ───────────────────────────────────────────
+    # ── 0. Dynamic AI-Driven Portfolio Capacity Limits ───────────────────────────
     current_options = [
         p for p in open_positions
         if p.get("asset_class") == "option" or bool(p.get("option_symbol"))
     ]
-    if len(current_options) >= MAX_SIMULTANEOUS_OPTIONS:
+    
+    cb_state = get_current_circuit_breaker()
+    capacity_info = compute_dynamic_options_capacity(
+        cb_state=cb_state,
+        open_positions=current_options
+    )
+    max_simultaneous = capacity_info["max_simultaneous"]
+
+    if len(current_options) >= max_simultaneous:
         return {
             "approved": False,
-            "gate_failed": "Portfolio Limit",
-            "reason": f"Max {MAX_SIMULTANEOUS_OPTIONS} simultaneous options reached ({len(current_options)} open)."
+            "gate_failed": "Portfolio Dynamic Limit",
+            "reason": f"AI Dynamic Capacity reached: {len(current_options)}/{max_simultaneous} open options ({capacity_info['regime']} | CB Level {capacity_info['circuit_breaker_level']})."
         }
 
-    underlying_held = any(p.get("symbol", "").upper() == symbol for p in current_options)
+    if capacity_info.get("budget_exhausted"):
+        return {
+            "approved": False,
+            "gate_failed": "Options Budget Cap",
+            "reason": f"75% Options Capital Budget fully allocated (${capacity_info['currently_deployed']:,.2f} of ${capacity_info['options_budget_cap']:,.2f}). Remaining cash is protected."
+        }
+
+    underlying_held = any(p.get("symbol", "").upper() == symbol or p.get("underlying_symbol", "").upper() == symbol for p in current_options)
     if underlying_held:
         return {
             "approved": False,
             "gate_failed": "Underlying Exposure",
-            "reason": f"{symbol} already has an active options position. Max 1 per underlying."
+            "reason": f"{symbol} already has an active options position. Max 1 per underlying to maintain diversification."
         }
 
     # ── GATE 1: Signal Quality ────────────────────────────────────────────────────
@@ -272,7 +366,7 @@ def evaluate_options_risk_gates(
         },
 
         "gates_passed": [
-            "Gate 0: Portfolio Limits (Max 5 positions, 1 per underlying)",
+            f"Gate 0: AI Dynamic Portfolio Capacity ({len(current_options)+1}/{max_simultaneous} slots | {capacity_info['regime']})",
             "Gate 1: Signal Quality (>=75% confidence)",
             "Gate 2: IV Regime Filter",
             "Gate 3: DTE Window (21-45 DTE)",

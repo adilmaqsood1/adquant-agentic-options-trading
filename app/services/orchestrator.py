@@ -227,12 +227,9 @@ def risk_node(state: AgentState) -> AgentState:
                     "risk_approved": True,
                     "timestamp": r_dec.get("timestamp")
                 }
-                approved_orders.append(order_payload)
-                
-                # Persist to database positions table
+                # Persist and route to Alpaca MCP
                 try:
                     if sig_type == "ENTER_LONG":
-                        # If US Equity or ETF -> Route through Options Trading Engine & Risk Gates
                         is_equity = "/" not in sym
                         opt_data = None
                         if is_equity and exec_price > 0:
@@ -266,6 +263,12 @@ def risk_node(state: AgentState) -> AgentState:
 
                                 if exec_res.get("success"):
                                     opt_data = contract_spec
+                                    open_options_position(
+                                        signal_dict={"symbol": sym, "strategy_id": s_id, "signal_type": sig_type},
+                                        contract_spec=contract_spec,
+                                        groq_decision=g_dec
+                                    )
+                                    approved_orders.append(order_payload)
                                     print(f"  [MCP EXECUTION SUCCESS] ✅ {contract_spec['occ_symbol']} live options order routed through Alpaca MCP.")
                                 else:
                                     print(f"  [MCP ROUTE NOTICE] {sym} -> {exec_res.get('status')}: {exec_res.get('reason') or exec_res.get('error')}")
