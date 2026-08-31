@@ -6,31 +6,16 @@ import requests
 from fastapi import APIRouter
 from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
 
-try:
-    from app.core.config import (
-        ALPACA_API_KEY, ALPACA_API_SECRET, ALPACA_BASE_URL,
-        FEATHERLESS_API_KEY, GROQ_API_KEY, SUPABASE_URL, SUPABASE_KEY
-    )
-    from app.core.database import get_pool, get_open_positions, get_portfolio_summary, _in_memory_cycles
-    from app.engine.performance_manager import fetch_live_alpaca_equity, fetch_live_alpaca_account, get_current_circuit_breaker, get_all_strategy_performance
-    from app.agents.research_agent import get_latest_insights
-    from app.agents.data_agent import get_all_snapshots
-    from app.data.alpaca_source import fetch_alpaca_latest_prices
-except ImportError:
-    from core.config import (
-        ALPACA_API_KEY, ALPACA_API_SECRET, ALPACA_BASE_URL,
-        FEATHERLESS_API_KEY, GROQ_API_KEY, SUPABASE_URL, SUPABASE_KEY
-    )
-    from core.database import get_pool, get_open_positions, get_portfolio_summary, _in_memory_cycles
-    from engine.performance_manager import fetch_live_alpaca_equity, fetch_live_alpaca_account, get_current_circuit_breaker, get_all_strategy_performance
-    from agents.research_agent import get_latest_insights
-    from agents.data_agent import get_all_snapshots
-    from data.alpaca_source import fetch_alpaca_latest_prices
-
-try:
-    from scheduler import get_scheduler_status
-except ImportError:
-    from app.scheduler import get_scheduler_status
+from app.core.config import (
+    ALPACA_API_KEY, ALPACA_API_SECRET, ALPACA_BASE_URL,
+    FEATHERLESS_API_KEY, GROQ_API_KEY, SUPABASE_URL, SUPABASE_KEY
+)
+from app.core.database import get_pool, get_open_positions, get_portfolio_summary, _in_memory_cycles
+from app.engine.performance_manager import fetch_live_alpaca_equity, fetch_live_alpaca_account, get_current_circuit_breaker, get_all_strategy_performance
+from app.agents.research_agent import get_latest_insights
+from app.agents.data_agent import get_all_snapshots
+from app.data.alpaca_source import fetch_alpaca_latest_prices
+from scheduler import get_scheduler_status
 
 router = APIRouter(tags=["Dashboard"])
 

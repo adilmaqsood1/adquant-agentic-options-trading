@@ -1,10 +1,7 @@
 import os
 import pandas as pd
 from typing import Dict, List, Optional
-try:
-    from app.data.adapter import get_data
-except ImportError:
-    from data.adapter import get_data
+from app.data.adapter import get_data
 
 RAW_PATH = os.path.join(os.path.dirname(__file__), "SP500_Data_10Y")
 

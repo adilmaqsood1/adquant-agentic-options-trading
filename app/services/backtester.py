@@ -3,10 +3,7 @@ import math
 import numpy as np
 import pandas as pd
 from typing import Dict, Any, List, Optional, Callable
-try:
-    from app.data.adapter import get_data
-except ImportError:
-    from data.adapter import get_data
+from app.data.adapter import get_data
 
 
 def clean_num(val: Any, default: float = 0.0) -> float:
