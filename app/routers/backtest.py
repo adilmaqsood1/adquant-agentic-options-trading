@@ -8,7 +8,7 @@ from app.schemas.models import (
 )
 from app.services.registry import STRATEGY_DEFINITIONS, STRATEGY_MAP
 from app.services.custom_builder import evaluate_custom_rules
-from app.data.data_loader import UNIVERSES, get_available_symbols, get_market_data
+from data.data_loader import UNIVERSES, get_available_symbols, get_market_data
 from app.services.backtester import run_portfolio_backtest
 
 router = APIRouter(prefix="/api", tags=["backtest"])
