@@ -266,13 +266,12 @@ def snapshot_greeks(occ_symbol: str, current_underlying_price: float) -> Optiona
 def check_exit_conditions(position: Dict[str, Any], current_premium: float) -> Optional[str]:
     """
     Evaluates options exit rules:
-    1. current_premium >= profit_target_premium -> 'profit_target' (+80%)
-    2. current_premium <= stop_loss_premium     -> 'stop_loss'     (-40%)
-    3. dte <= time_stop_dte                     -> 'time_stop'     (<= 7 DTE)
+    1. current_premium >= profit_target_premium -> 'profit_target' (+60% to +80%)
+    2. current_premium <= stop_loss_premium     -> 'stop_loss'     (-35% to -40%)
+    3. dte <= time_stop_dte                     -> 'time_stop'     (<= 7 DTE for single-leg, <= 14 DTE for spreads)
     """
     target_prem = float(position.get("profit_target_premium") or 999999.0)
     stop_prem = float(position.get("stop_loss_premium") or 0.0)
-    time_stop = int(position.get("time_stop_dte") or 7)
 
     # 1. Profit Target Check
     if current_premium >= target_prem:
@@ -282,7 +281,12 @@ def check_exit_conditions(position: Dict[str, Any], current_premium: float) -> O
     if current_premium <= stop_prem:
         return "stop_loss"
 
-    # 3. Time Stop DTE Check
+    # 3. Dynamic Structural DTE Time-Stop Check
+    strat_type = str(position.get("strategy_type", "")).lower()
+    # Spreads and complex multi-leg structures exit earlier at 14 DTE; directional single-leg calls/puts at 7 DTE
+    default_time_stop = 14 if any(k in strat_type for k in ["spread", "condor", "butterfly", "straddle", "strangle"]) else 7
+    time_stop = int(position.get("time_stop_dte") or default_time_stop)
+
     exp_date = position.get("expiry_date")
     if exp_date:
         if isinstance(exp_date, str):

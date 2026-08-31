@@ -49,61 +49,61 @@ ALL_SP500_SYMBOLS: List[str] = get_all_sp500_symbols()
 ALL_US_EQUITIES: List[str] = sorted(list(set(ALL_SP500_SYMBOLS + ALL_NASDAQ_SYMBOLS + OPTIONS_CORE_UNIVERSE)))
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 2. STRATEGY MARKET CONFIGURATION (100% Optionable Equities & ETFs)
+# 2. STRATEGY MARKET CONFIGURATION (Full Universe: 521 Optionable US Equities & ETFs)
 # ─────────────────────────────────────────────────────────────────────────────
 STRATEGY_MARKET_CONFIG: Dict[str, Dict[str, Any]] = {
     # 2H Fast Momentum: High-Beta Optionable Tech Equities & Indices
     "momentum_ema_rsi_adx": {
-        "symbols": OPTIONS_CORE_UNIVERSE,
+        "symbols": ALL_US_EQUITIES,
         "source": "alpaca",
         "timeframe": "2H",
         "bars_needed": 300
     },
     # 4H Microstructure: Liquidity Sweep & Stop-Hunt Absorption
     "liquidity_sweep_absorption": {
-        "symbols": ALL_NASDAQ_SYMBOLS,
+        "symbols": ALL_US_EQUITIES,
         "source": "alpaca",
         "timeframe": "4H",
         "bars_needed": 300
     },
     # 4H Statistical Lead-Lag: High-Beta Propagation
     "lead_lag_propagation": {
-        "symbols": ALL_NASDAQ_SYMBOLS,
+        "symbols": ALL_US_EQUITIES,
         "source": "alpaca",
         "timeframe": "4H",
         "bars_needed": 300
     },
     # 4H Regime Switching: Hurst Double Squeeze
     "hurst_double_squeeze": {
-        "symbols": ALL_NASDAQ_SYMBOLS,
+        "symbols": ALL_US_EQUITIES,
         "source": "alpaca",
         "timeframe": "4H",
         "bars_needed": 300
     },
     # 4H Institutional Benchmark: Anchored VWAP Deviation Snap
     "anchored_vwap_deviation": {
-        "symbols": ALL_NASDAQ_SYMBOLS,
+        "symbols": ALL_US_EQUITIES,
         "source": "alpaca",
         "timeframe": "4H",
         "bars_needed": 300
     },
     # 4H Order Flow: CVD Delta Divergence Short Squeeze
     "cvd_divergence_squeeze": {
-        "symbols": ALL_NASDAQ_SYMBOLS,
+        "symbols": ALL_US_EQUITIES,
         "source": "alpaca",
         "timeframe": "4H",
         "bars_needed": 300
     },
     # 4H Momentum / Reversal: RSI Oversold Bullish Hook Above 30
     "rsi_oversold_reversal": {
-        "symbols": ALL_NASDAQ_SYMBOLS,
+        "symbols": ALL_US_EQUITIES,
         "source": "alpaca",
         "timeframe": "4H",
         "bars_needed": 300
     },
     # 4H/1D Institutional Trend Pullback Continuation (TEAM-Style)
     "trend_pullback_continuation": {
-        "symbols": ALL_NASDAQ_SYMBOLS,
+        "symbols": ALL_US_EQUITIES,
         "source": "alpaca",
         "timeframe": "4H",
         "bars_needed": 300
