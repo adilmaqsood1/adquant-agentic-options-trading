@@ -108,20 +108,36 @@ def select_contract(
                 "limit": 100
             }
             r = requests.get(f"{alpaca_base}/options/contracts", headers=headers, params=params, timeout=4)
+            contracts = []
             if r.status_code == 200:
                 contracts = r.json().get("option_contracts", [])
-                if contracts:
-                    ideal_strike_target = underlying_price * (0.96 if contract_type == "call" else 1.04)
-                    def score_c(c):
-                        stk = float(c.get("strike_price") or 0.0)
-                        exp_d = datetime.date.fromisoformat(c.get("expiration_date"))
-                        d_rem = (exp_d - today).days
-                        strike_diff = abs(stk - ideal_strike_target) / underlying_price
-                        dte_diff = abs(d_rem - target_dte_days)
-                        return strike_diff * 100 + dte_diff * 0.5
 
-                    sorted_c = sorted(contracts, key=score_c)
-                    real_contract = sorted_c[0]
+            # Secondary broader query (14 to 65 DTE) for symbols with monthly-only option cycles
+            if not contracts:
+                params_broad = {
+                    "underlying_symbols": symbol,
+                    "status": "active",
+                    "type": "call" if contract_type == "call" else "put",
+                    "expiration_date_gte": (today + datetime.timedelta(days=14)).isoformat(),
+                    "expiration_date_lte": (today + datetime.timedelta(days=65)).isoformat(),
+                    "limit": 100
+                }
+                r_broad = requests.get(f"{alpaca_base}/options/contracts", headers=headers, params=params_broad, timeout=4)
+                if r_broad.status_code == 200:
+                    contracts = r_broad.json().get("option_contracts", [])
+
+            if contracts:
+                ideal_strike_target = underlying_price * (0.96 if contract_type == "call" else 1.04)
+                def score_c(c):
+                    stk = float(c.get("strike_price") or 0.0)
+                    exp_d = datetime.date.fromisoformat(c.get("expiration_date"))
+                    d_rem = (exp_d - today).days
+                    strike_diff = abs(stk - ideal_strike_target) / (underlying_price or 1.0)
+                    dte_diff = abs(d_rem - target_dte_days)
+                    return strike_diff * 100 + dte_diff * 0.5
+
+                sorted_c = sorted(contracts, key=score_c)
+                real_contract = sorted_c[0]
     except Exception as e:
         print(f"[ContractSelector] Alpaca live option notice: {e}")
 

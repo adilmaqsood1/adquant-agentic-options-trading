@@ -2,7 +2,7 @@ import math
 from typing import Dict, Any, List, Optional
 
 MAX_CONTRACTS_PER_TRADE = 3
-MIN_OPTION_TRADE_SIZE = 500.0   # below this, fees eat the edge
+MIN_OPTION_TRADE_SIZE = 200.0   # minimum trade capital for 1 contract
 
 # Known high-liquidity names: fast-pass Gate 4 without any warning.
 # Any other US equity/ETF is still allowed — this list just skips the warning log.
@@ -179,12 +179,18 @@ def evaluate_options_risk_gates(
             "reason": f"75% Options Capital Budget fully allocated (${capacity_info['currently_deployed']:,.2f} of ${capacity_info['options_budget_cap']:,.2f}). Remaining cash is protected."
         }
 
-    underlying_held = any(p.get("symbol", "").upper() == symbol or p.get("underlying_symbol", "").upper() == symbol for p in current_options)
+    from app.core.database import extract_underlying_ticker
+    underlying_held = any(
+        extract_underlying_ticker(p.get("symbol") or "") == symbol or
+        extract_underlying_ticker(p.get("underlying_symbol") or "") == symbol or
+        extract_underlying_ticker(p.get("option_symbol") or "") == symbol
+        for p in current_options
+    )
     if underlying_held:
         return {
             "approved": False,
             "gate_failed": "Underlying Exposure",
-            "reason": f"{symbol} already has an active options position. Max 1 per underlying to maintain diversification."
+            "reason": f"{symbol} already has an active options position or working open order. Max 1 per underlying to maintain diversification."
         }
 
     # ── GATE 1: Signal Quality ────────────────────────────────────────────────────

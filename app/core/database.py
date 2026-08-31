@@ -346,9 +346,20 @@ def close_position(
     return None
 
 
+def extract_underlying_ticker(sym: str) -> str:
+    """Extracts root ticker from OCC string (e.g. ABT from ABT261002C00108000) or returns clean sym."""
+    import re
+    if not sym:
+        return ""
+    m = re.match(r"^([A-Z]+)\d{6}[CP]\d{8}$", sym)
+    if m:
+        return m.group(1)
+    return sym.upper()
+
+
 def get_open_positions() -> List[Dict[str, Any]]:
     """
-    Returns live open positions directly from Alpaca Broker API when connected,
+    Returns live open positions AND working open orders directly from Alpaca Broker API when connected,
     falling back to database / in-memory ledger.
     """
     try:
@@ -361,25 +372,51 @@ def get_open_positions() -> List[Dict[str, Any]]:
 
         if alpaca_key and alpaca_sec:
             headers = {"APCA-API-KEY-ID": alpaca_key, "APCA-API-SECRET-KEY": alpaca_sec}
-            r = requests.get(f"{alpaca_base}/positions", headers=headers, timeout=3)
-            if r.status_code == 200:
-                raw_positions = r.json()
-                alpaca_list = []
-                for p in raw_positions:
+            alpaca_list = []
+            seen_occ = set()
+
+            # 1. Filled Active Positions
+            r_pos = requests.get(f"{alpaca_base}/positions", headers=headers, timeout=8)
+            if r_pos.status_code == 200:
+                for p in r_pos.json():
                     sym = p.get("symbol", "")
+                    und = extract_underlying_ticker(sym)
+                    seen_occ.add(sym)
                     alpaca_list.append({
                         "id": p.get("asset_id"),
-                        "symbol": sym,
-                        "underlying_symbol": sym,
+                        "symbol": und,
+                        "underlying_symbol": und,
                         "option_symbol": sym,
                         "asset_class": "option" if len(sym) > 6 else "equity",
                         "quantity": abs(float(p.get("qty", 1))),
                         "entry_price": float(p.get("avg_entry_price", 0.0)),
                         "current_price": float(p.get("current_price", 0.0)),
                         "unrealized_pl": float(p.get("unrealized_pl", 0.0)),
-                        "status": "open"
+                        "status": "open",
+                        "is_working_order": False
                     })
-                return alpaca_list
+
+            # 2. Working / Pending Open Orders
+            r_ord = requests.get(f"{alpaca_base}/orders?status=open", headers=headers, timeout=8)
+            if r_ord.status_code == 200:
+                for o in r_ord.json():
+                    sym = o.get("symbol", "")
+                    if sym not in seen_occ:
+                        und = extract_underlying_ticker(sym)
+                        alpaca_list.append({
+                            "id": o.get("id"),
+                            "symbol": und,
+                            "underlying_symbol": und,
+                            "option_symbol": sym,
+                            "asset_class": "option" if len(sym) > 6 else "equity",
+                            "quantity": abs(float(o.get("qty", 1))),
+                            "entry_price": float(o.get("limit_price") or 0.0),
+                            "current_price": float(o.get("limit_price") or 0.0),
+                            "unrealized_pl": 0.0,
+                            "status": "pending_order",
+                            "is_working_order": True
+                        })
+            return alpaca_list
     except Exception as e:
         print(f"[Database] Live Alpaca positions sync notice: {e}")
 
