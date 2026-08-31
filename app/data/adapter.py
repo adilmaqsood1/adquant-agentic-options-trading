@@ -4,16 +4,9 @@ import pandas as pd
 import numpy as np
 from typing import Optional
 
-try:
-    from app.data.kaggle_source import load_kaggle_data, POSSIBLE_PATHS
-    from app.data.alpaca_source import fetch_alpaca_stock_bars
-except ImportError:
-    try:
-        from data.kaggle_source import load_kaggle_data, POSSIBLE_PATHS
-        from data.alpaca_source import fetch_alpaca_stock_bars
-    except ImportError:
-        from .kaggle_source import load_kaggle_data, POSSIBLE_PATHS
-        from .alpaca_source import fetch_alpaca_stock_bars
+from kaggle_source import load_kaggle_data, POSSIBLE_PATHS
+from alpaca_source import fetch_alpaca_stock_bars  
+
 
 CACHE_DIR = os.path.join(os.path.dirname(__file__), "cache")
 os.makedirs(CACHE_DIR, exist_ok=True)
@@ -29,9 +22,9 @@ for folder in POSSIBLE_PATHS:
 
 def resolve_source(symbol: str, start: Optional[str] = None, end: Optional[str] = None) -> str:
     """
-    Auto-routing logic for symbols:
-    - Default for live/real-time US optionable equities & ETFs -> 'alpaca'
-    - Historical Kaggle dataset fallback -> 'kaggle'
+    Auto-routing logic for US Optionable Equities & ETFs:
+    - In Kaggle S&P 500 list (for long historical backtesting up to 2025) -> 'kaggle'
+    - Default for live / real-time US optionable equities & ETFs -> 'alpaca'
     """
     orig_clean = symbol.upper().replace("/", "-").strip()
     if orig_clean in KAGGLE_SYMBOLS:
@@ -116,7 +109,8 @@ def get_data(
     """
     Master unified data entry point:
     - Fetches from Alpaca (live/historical) or Kaggle (historical)
-    - Standardizes 5-column DataFrame (open, high, low, close, volume) with DatetimeIndex
+    - Seamlessly caches responses in data/cache/
+    - Returns standardized 5-column DataFrame (open, high, low, close, volume) with DatetimeIndex
     """
     sym = symbol.strip().upper()
     
@@ -147,8 +141,12 @@ def get_data(
     raw_df = None
     if src == "kaggle":
         raw_df = load_kaggle_data(sym, start=start, end=end, interval=interval)
+        if raw_df is None or raw_df.empty:
+            raw_df = fetch_alpaca_stock_bars(sym, start=start, end=end, interval=interval)
     elif src == "alpaca":
         raw_df = fetch_alpaca_stock_bars(sym, start=start, end=end, interval=interval)
+        if raw_df is None or raw_df.empty:
+            raw_df = load_kaggle_data(sym, start=start, end=end, interval=interval)
     else:
         # Fallback cascade: Alpaca -> Kaggle
         raw_df = fetch_alpaca_stock_bars(sym, start=start, end=end, interval=interval)

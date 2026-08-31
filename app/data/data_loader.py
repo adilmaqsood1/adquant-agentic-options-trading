@@ -51,16 +51,19 @@ def get_market_data(
 
 
 def get_available_symbols() -> List[Dict[str, str]]:
-    """Return all available local + top crypto symbols"""
+    """Return all available US Equities and Optionable ETF symbols"""
     symbols = []
     if os.path.exists(RAW_PATH):
         for f in os.listdir(RAW_PATH):
             if f.endswith(".csv"):
                 s = f.replace(".csv", "")
-                symbols.append({"symbol": s, "asset_class": "US Equities", "source": "Kaggle S&P 500"})
+                symbols.append({"symbol": s, "asset_class": "US Equities", "source": "S&P 500 Options Universe"})
     
-    crypto_list = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT", "ADAUSDT", "DOGEUSDT", "DOTUSDT", "LINKUSDT", "AVAXUSDT"]
-    for c in crypto_list:
-        symbols.append({"symbol": c, "asset_class": "Crypto Perpetuals", "source": "Binance"})
+    # Core high-liquidity ETF symbols
+    etfs = ["SPY", "QQQ", "IWM", "DIA", "XLF", "XLK", "XLE", "SMH", "TLT", "NVDA", "AAPL", "MSFT", "AMZN", "GOOGL", "META", "TSLA"]
+    seen = {item["symbol"] for item in symbols}
+    for e in etfs:
+        if e not in seen:
+            symbols.append({"symbol": e, "asset_class": "US Equities & ETFs", "source": "Alpaca Options"})
         
     return symbols
