@@ -1,11 +1,14 @@
 import os
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv(override=True)
+
+def reload_config():
+    load_dotenv(override=True)
 
 ALPACA_API_KEY = os.getenv("ALPACA_API_KEY")
 ALPACA_API_SECRET = os.getenv("ALPACA_API_SECRET")
-ALPACA_BASE_URL = os.getenv("ALPACA_BASE_URL")
+ALPACA_BASE_URL = os.getenv("ALPACA_BASE_URL", "https://paper-api.alpaca.markets/v2")
 ALPACA_DATA_URL = os.getenv("ALPACA_DATA_URL")
 
 # LLM Primary Model Settings (Featherless DeepSeek-V3.2)

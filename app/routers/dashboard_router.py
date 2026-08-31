@@ -45,9 +45,14 @@ def check_infrastructure_health() -> Dict[str, Any]:
 
     results = {}
 
+    from dotenv import load_dotenv
+    load_dotenv(override=True)
+    alpaca_key = os.getenv("ALPACA_API_KEY") or ALPACA_API_KEY
+    alpaca_secret = os.getenv("ALPACA_API_SECRET") or ALPACA_API_SECRET
+    alpaca_url = (os.getenv("ALPACA_BASE_URL") or ALPACA_BASE_URL or "https://paper-api.alpaca.markets/v2").rstrip("/")
+
     # 1. Alpaca Trading API Check
-    alpaca_url = ALPACA_BASE_URL or "https://paper-api.alpaca.markets/v2"
-    if not ALPACA_API_KEY or not ALPACA_API_SECRET:
+    if not alpaca_key or not alpaca_secret:
         results["alpaca"] = {
             "connected": False,
             "status": "Missing API Keys",
@@ -61,8 +66,8 @@ def check_infrastructure_health() -> Dict[str, Any]:
             r = requests.get(
                 f"{alpaca_url}/account",
                 headers={
-                    "APCA-API-KEY-ID": ALPACA_API_KEY,
-                    "APCA-API-SECRET-KEY": ALPACA_API_SECRET
+                    "APCA-API-KEY-ID": alpaca_key,
+                    "APCA-API-SECRET-KEY": alpaca_secret
                 },
                 timeout=3
             )
@@ -72,7 +77,7 @@ def check_infrastructure_health() -> Dict[str, Any]:
                     "status": "Connected (Paper Trading)",
                     "code": 200,
                     "message": "Authenticated with Alpaca Paper Trading Account",
-                    "masked_key": mask_key(ALPACA_API_KEY),
+                    "masked_key": mask_key(alpaca_key),
                     "mode": "Paper Trading"
                 }
             elif r.status_code == 401 or r.status_code == 403:
@@ -81,7 +86,7 @@ def check_infrastructure_health() -> Dict[str, Any]:
                     "status": "Unauthorized (Invalid API Key)",
                     "code": r.status_code,
                     "message": f"HTTP {r.status_code}: Alpaca rejected API credentials.",
-                    "masked_key": mask_key(ALPACA_API_KEY),
+                    "masked_key": mask_key(alpaca_key),
                     "mode": "Paper Trading"
                 }
             else:
@@ -90,7 +95,7 @@ def check_infrastructure_health() -> Dict[str, Any]:
                     "status": f"HTTP {r.status_code}",
                     "code": r.status_code,
                     "message": f"Alpaca API returned status code {r.status_code}",
-                    "masked_key": mask_key(ALPACA_API_KEY),
+                    "masked_key": mask_key(alpaca_key),
                     "mode": "Paper Trading"
                 }
         except Exception as e:
@@ -99,7 +104,7 @@ def check_infrastructure_health() -> Dict[str, Any]:
                 "status": "Connection Error",
                 "code": 500,
                 "message": str(e),
-                "masked_key": mask_key(ALPACA_API_KEY),
+                "masked_key": mask_key(alpaca_key),
                 "mode": "Paper Trading"
             }
 

@@ -26,12 +26,16 @@ def fetch_live_alpaca_account() -> Dict[str, Any]:
     Falls back to portfolio_state in database or starting balance.
     """
     try:
-        from app.core.config import ALPACA_API_KEY, ALPACA_API_SECRET, ALPACA_BASE_URL
-        if ALPACA_API_KEY and ALPACA_API_SECRET:
+        from dotenv import load_dotenv
+        load_dotenv(override=True)
+        key = os.getenv("ALPACA_API_KEY")
+        secret = os.getenv("ALPACA_API_SECRET")
+        base_url = (os.getenv("ALPACA_BASE_URL") or "https://paper-api.alpaca.markets/v2").rstrip("/")
+        if key and secret:
             import httpx
-            headers = {"APCA-API-KEY-ID": ALPACA_API_KEY, "APCA-API-SECRET-KEY": ALPACA_API_SECRET}
+            headers = {"APCA-API-KEY-ID": key, "APCA-API-SECRET-KEY": secret}
             with httpx.Client(timeout=8.0) as client:
-                resp = client.get(f"{ALPACA_BASE_URL}/account", headers=headers)
+                resp = client.get(f"{base_url}/account", headers=headers)
                 if resp.status_code == 200:
                     data = resp.json()
                     eq = float(data.get("equity") or data.get("portfolio_value") or TOTAL_PORTFOLIO)

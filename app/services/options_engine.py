@@ -1,3 +1,4 @@
+import os
 import math
 import datetime
 from typing import Dict, Any, List, Optional, Tuple
@@ -86,41 +87,88 @@ def select_optimal_option_contract(
     """
     clean_sym = symbol.upper().replace("/", "")
     today = datetime.date.today()
-    
-    # 1. Target Expiration Date (Next Friday closest to 30-45 DTE)
-    raw_expiry = today + datetime.timedelta(days=target_dte)
-    days_to_friday = (4 - raw_expiry.weekday()) % 7
-    expiry_date = raw_expiry + datetime.timedelta(days=days_to_friday)
-    actual_dte = (expiry_date - today).days
-
-    # 2. Select Strike Price for Target Delta (~0.70 ITM Call for Bullish signals)
     is_call = "BUY" in signal_type.upper() or "LONG" in signal_type.upper()
     opt_type = "call" if is_call else "put"
-    
     spot_price = float(spot_price)
     allocated_capital = float(allocated_capital)
     historical_vol = float(historical_vol)
 
-    # Strike interval rounding ($0.50, $1.00, $2.50, or $5.00 depending on price)
-    if spot_price < 25:
-        strike_step = 0.50
-    elif spot_price < 100:
-        strike_step = 1.00
-    elif spot_price < 250:
-        strike_step = 2.50
-    else:
-        strike_step = 5.00
+    # 1. Live Alpaca Options Chain Lookup (Queries real OPRA listed option contracts)
+    real_contract = None
+    try:
+        from dotenv import load_dotenv
+        import requests
+        load_dotenv(override=True)
+        alpaca_key = os.getenv("ALPACA_API_KEY")
+        alpaca_sec = os.getenv("ALPACA_API_SECRET")
+        alpaca_base = (os.getenv("ALPACA_BASE_URL") or "https://paper-api.alpaca.markets/v2").rstrip("/")
 
-    if is_call:
-        # ITM call at ~0.70 Delta is typically 3-5% below spot
-        ideal_strike = spot_price * 0.96
-        strike_price = float(round(round(ideal_strike / strike_step) * strike_step, 2))
-    else:
-        # ITM put at ~0.70 Delta is typically 3-5% above spot
-        ideal_strike = spot_price * 1.04
-        strike_price = float(round(round(ideal_strike / strike_step) * strike_step, 2))
+        if alpaca_key and alpaca_sec:
+            headers = {"APCA-API-KEY-ID": alpaca_key, "APCA-API-SECRET-KEY": alpaca_sec}
+            exp_min = (today + datetime.timedelta(days=21)).isoformat()
+            exp_max = (today + datetime.timedelta(days=45)).isoformat()
+            params = {
+                "underlying_symbols": clean_sym,
+                "status": "active",
+                "type": "call" if is_call else "put",
+                "expiration_date_gte": exp_min,
+                "expiration_date_lte": exp_max,
+                "limit": 100
+            }
+            r = requests.get(f"{alpaca_base}/options/contracts", headers=headers, params=params, timeout=4)
+            if r.status_code == 200:
+                contracts = r.json().get("option_contracts", [])
+                if contracts:
+                    ideal_target_strike = spot_price * (0.96 if is_call else 1.04)
+                    def score_opt(c):
+                        stk = float(c.get("strike_price") or 0.0)
+                        exp_d = datetime.date.fromisoformat(c.get("expiration_date"))
+                        d_rem = (exp_d - today).days
+                        strike_diff = abs(stk - ideal_target_strike) / spot_price
+                        dte_diff = abs(d_rem - target_dte)
+                        return strike_diff * 100 + dte_diff * 0.5
 
-    # 3. Calculate Greeks & Premium
+                    sorted_opts = sorted(contracts, key=score_opt)
+                    real_contract = sorted_opts[0]
+    except Exception as e:
+        print(f"[OptionsEngine] Live option chain notice: {e}")
+
+    if real_contract:
+        occ_sym = real_contract.get("symbol")
+        strike_price = float(real_contract.get("strike_price"))
+        expiry_date = datetime.date.fromisoformat(real_contract.get("expiration_date"))
+        actual_dte = max(1, (expiry_date - today).days)
+    else:
+        # Fallback to Mathematical Synthetic Strike & Date
+        raw_expiry = today + datetime.timedelta(days=target_dte)
+        days_to_friday = (4 - raw_expiry.weekday()) % 7
+        expiry_date = raw_expiry + datetime.timedelta(days=days_to_friday)
+        actual_dte = max(1, (expiry_date - today).days)
+
+        if spot_price < 25:
+            strike_step = 0.50
+        elif spot_price < 100:
+            strike_step = 1.00
+        elif spot_price < 250:
+            strike_step = 2.50
+        else:
+            strike_step = 5.00
+
+        if is_call:
+            ideal_strike = spot_price * 0.96
+            strike_price = float(round(round(ideal_strike / strike_step) * strike_step, 2))
+        else:
+            ideal_strike = spot_price * 1.04
+            strike_price = float(round(round(ideal_strike / strike_step) * strike_step, 2))
+
+        occ_sym = generate_occ_symbol(
+            symbol=clean_sym,
+            expiry_date=expiry_date,
+            strike=strike_price,
+            option_type="C" if is_call else "P"
+        )
+
+    # 3. Calculate Greeks & Premium for Selected Contract
     greeks = black_scholes_pricing(
         spot=spot_price,
         strike=strike_price,
@@ -135,13 +183,6 @@ def select_optimal_option_contract(
     # 4. Sizing: Calculate number of whole contracts
     num_contracts = int(max(1, int(allocated_capital / cost_per_contract))) if cost_per_contract > 0 else 1
     total_committed = float(round(num_contracts * cost_per_contract, 2))
-
-    occ_sym = generate_occ_symbol(
-        symbol=clean_sym,
-        expiry_date=expiry_date,
-        strike=strike_price,
-        option_type="C" if is_call else "P"
-    )
 
     breakeven = float(round(strike_price + contract_premium if is_call else strike_price - contract_premium, 2))
     leverage_mult = float(round((greeks["delta"] * spot_price) / max(0.1, contract_premium), 2))
