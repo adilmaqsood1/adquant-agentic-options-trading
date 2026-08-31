@@ -53,19 +53,23 @@ def send_cycle_report(cycle_summary: Dict[str, Any]) -> bool:
     
     asset_tag = " / ".join(asset_ctx)
 
+    # Only deliver email if an actual trade was approved/placed or on emergency circuit breaker shutdown
+    if risk_approved == 0 and not cycle_summary.get("cb_level"):
+        print("[EmailReporter] Zero new orders placed in cycle. Skipping email dispatch to ensure only actionable trade emails are delivered.")
+        return True
+
     # ─────────────────────────────────────────────────────────────────────────
-    # 1. Subject Line Logic
+    # 1. Subject Line Logic (Only for live executed trade cycles)
     # ─────────────────────────────────────────────────────────────────────────
     if risk_approved > 0 and approved_orders:
         first_order = approved_orders[0]
-        s_id = first_order.get("strategy_id", "algo")
-        sym = first_order.get("symbol", "BTCUSDT")
-        sig_t = first_order.get("signal_type", "ENTER_LONG")
-        subject = f"[AGENT] {timeframe_scope} Cycle | ORDER APPROVED | {s_id} {sym} {sig_t}"
-    elif signals_detected > 0:
-        subject = f"[AGENT] {timeframe_scope} Cycle | {signals_detected} Signals | {risk_approved} Approved | {symbols_scanned} Assets Scanned"
+        s_id = first_order.get("strategy_id", "options_core")
+        sym = first_order.get("symbol", "OPTION")
+        conf_tier = first_order.get("confluence_tier", "APPROVED")
+        rank_val = first_order.get("tournament_rank", 1)
+        subject = f"🎯 [ADQuant Trade Execution] {sym} ({conf_tier}) | Rank #{rank_val} | Strategy: {s_id}"
     else:
-        subject = f"[AGENT] {timeframe_scope} Cycle | No Signals | {symbols_scanned} Assets Scanned ({asset_tag})"
+        subject = f"🚨 [ADQuant Alert] Emergency Circuit Breaker Notification"
 
     # ─────────────────────────────────────────────────────────────────────────
     # 2. Email Body Composition

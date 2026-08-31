@@ -396,12 +396,13 @@ def report_node(state: AgentState) -> AgentState:
         print(f"[REPORT] DB log_cycle error: {e}")
         state["errors"].append(f"DB log_cycle error: {e}")
 
-    # Dispatch email report with attached cycle_log.json
-    try:
-        send_cycle_report(summary)
-    except Exception as e:
-        print(f"[REPORT] Email dispatch error: {e}")
-        state["errors"].append(f"Email dispatch error: {e}")
+    # Dispatch email report ONLY if an actual live trade was executed in this cycle
+    if risk_approved_count > 0:
+        try:
+            send_cycle_report(summary)
+        except Exception as e:
+            print(f"[REPORT] Email dispatch error: {e}")
+            state["errors"].append(f"Email dispatch error: {e}")
 
     print("\n" + "=" * 75)
     print(f"[REPORT] Cycle Complete ({timeframe_scope}) | Duration: {duration_sec}s | Scanned: {len(all_signals)} | Fired: {len(fired_signals)} | Approved: {risk_approved_count}")

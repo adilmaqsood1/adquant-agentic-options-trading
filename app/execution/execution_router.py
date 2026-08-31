@@ -100,16 +100,6 @@ def route_and_execute(
     except Exception as e:
         print(f"[ExecutionRouter] Warning updating portfolio state: {e}")
 
-    # 5. Dispatch optional email notification if configured
-    try:
-        from app.reporting.email_reporter import send_email_alert
-        send_email_alert(
-            subject=f"🎯 [Alpaca MCP] Options Trade Executed: {occ_symbol}",
-            body=f"Strategy: {strat_id}\nSymbol: {sym}\nOCC: {occ_symbol}\nContracts: {order_res.get('contracts_qty')}\nPremium: ${order_res.get('filled_price'):.2f}\nTotal Cost: ${order_res.get('total_cost'):.2f}\nOrder ID: {order_res.get('order_id')}"
-        )
-    except Exception:
-        pass
-
     return {
         "success": True,
         "status": "EXECUTED",

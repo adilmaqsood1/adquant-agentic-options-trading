@@ -180,13 +180,17 @@ def rank_opportunities_tournament(
                 sym = item.get("symbol", "").upper()
                 c_obj = pool_map.get(sym)
                 if c_obj:
+                    t_score = int(item.get("tournament_score") or 0)
+                    if t_score <= 0:
+                        t_score = int(c_obj["composite_conviction"])
+
                     ranked_candidates.append({
                         "rank": item.get("rank", len(ranked_candidates) + 1),
                         "symbol": sym,
                         "confluence_tier": c_obj["confluence_tier"],
                         "confluence_count": c_obj["confluence_count"],
                         "strategies_fired": c_obj["strategies_fired"],
-                        "tournament_score": item.get("tournament_score", c_obj["composite_conviction"]),
+                        "tournament_score": min(99, max(50, t_score)),
                         "rationale": _clean_text(item.get("rationale", f"Selected with {c_obj['confluence_tier']} conviction.")),
                         "recommended_action": item.get("recommended_action", "BUY CALL (ITM)"),
                         "suggested_size_pct": item.get("suggested_size_pct", 100),
