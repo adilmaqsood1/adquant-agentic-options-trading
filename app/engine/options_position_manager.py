@@ -8,12 +8,20 @@ TOTAL_OPTIONS_BUDGET = 30000.0 # 30% of $100k portfolio
 
 def open_options_position(
     contract_spec: Dict[str, Any],
-    groq_decision: Optional[Dict[str, Any]] = None
+    groq_decision: Optional[Dict[str, Any]] = None,
+    signal_dict: Optional[Dict[str, Any]] = None,
+    **kwargs
 ) -> int:
     """
     Inserts a complete options contract record into PostgreSQL 'options_contracts' table.
     Returns the generated integer ID.
     """
+    if signal_dict and isinstance(signal_dict, dict):
+        if not contract_spec.get("strategy_id") and signal_dict.get("strategy_id"):
+            contract_spec["strategy_id"] = signal_dict.get("strategy_id")
+        if not contract_spec.get("underlying_symbol") and signal_dict.get("symbol"):
+            contract_spec["underlying_symbol"] = signal_dict.get("symbol")
+
     if groq_decision is None:
         groq_decision = {
             "confidence": 85,

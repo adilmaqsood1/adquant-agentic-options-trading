@@ -184,35 +184,63 @@ def reason_node(state: AgentState) -> AgentState:
 
 
 def risk_node(state: AgentState) -> AgentState:
-    groq_decisions = state.get("groq_decisions", [])
     fired_signals = state.get("fired_signals", [])
     portfolio_summary = get_portfolio_summary()
 
     risk_decisions: List[Dict[str, Any]] = []
     approved_orders: List[Dict[str, Any]] = []
 
-    # Map signals by (strategy_id, symbol)
-    sig_map = {(s["strategy_id"], s["symbol"]): s for s in fired_signals}
+    # 1. Multi-Strategy Confluence Detection
+    from app.engine.opportunity_ranker import detect_confluence_opportunities, rank_opportunities_tournament
+    from app.engine.risk_gate_agent import compute_dynamic_options_capacity, evaluate_options_risk_gates
+    from app.core.database import get_open_positions
 
-    for g_dec in groq_decisions:
-        s_id = g_dec["strategy_id"]
-        sym = g_dec["symbol"]
-        sig = sig_map.get((s_id, sym), {
-            "strategy_id": s_id, "symbol": sym,
-            "allocated_capital": 20000.0, "last_close": 0.0
-        })
+    current_open_pos = get_open_positions()
+    capacity_info = compute_dynamic_options_capacity(open_positions=current_open_pos)
+    available_slots = max(0, capacity_info["max_simultaneous"] - len(current_open_pos))
+
+    confluence_pool = detect_confluence_opportunities(fired_signals)
+    print(f"[Confluence] Detected {len(confluence_pool)} unique symbol setups across {len(fired_signals)} strategy triggers.")
+
+    # 2. DeepSeek-V3.2 Opportunity Tournament Ranking
+    tournament = rank_opportunities_tournament(
+        confluence_pool=confluence_pool,
+        available_capacity=max(1, available_slots) if available_slots > 0 else 1,
+        market_regime=state.get("research_insights", {}).get("market_regime", {}).get("regime", "STRONG_BULL")
+    )
+
+    selected_candidates = tournament.get("selected_for_execution", [])
+    tournament_summary = tournament.get("tournament_summary", "")
+    print(f"[Tournament] 🏆 DeepSeek Tournament: Selected Top {len(selected_candidates)} candidates for execution:\n  {tournament_summary}")
+
+    # 3. Process Ranked Candidates through 5-Gate Defense & Alpaca MCP
+    for item in selected_candidates:
+        sig = item.get("signal_payload", {})
+        s_id = sig.get("strategy_id", "options_core")
+        sym = item.get("symbol", "").upper()
+        exec_price = float(item.get("last_close") or sig.get("last_close", 0.0))
+        sig_type = sig.get("signal_type", "ENTER_LONG")
+        timeframe_val = sig.get("timeframe", state.get("timeframe_scope", "4H"))
+        conf = int(item.get("tournament_score", 85))
+        reasoning = item.get("rationale", "")
+
+        g_dec = {
+            "strategy_id": s_id,
+            "symbol": sym,
+            "go": True,
+            "confidence": conf,
+            "reasoning": reasoning,
+            "suggested_size_pct": item.get("suggested_size_pct", 100)
+        }
 
         try:
             r_dec = evaluate_risk(sig, g_dec, portfolio_summary)
             risk_decisions.append(r_dec)
 
             if r_dec["approved"]:
-                sig_type = sig.get("signal_type", "ENTER_LONG")
-                timeframe_val = sig.get("timeframe", state.get("timeframe_scope", "4H"))
-                exec_price = float(sig.get("last_close", 0.0))
                 final_cap = float(r_dec.get("final_capital", sig.get("allocated_capital", 20000.0)))
                 final_qty = float(r_dec.get("final_quantity", 0.0))
-                
+
                 order_payload = {
                     "strategy_id": s_id,
                     "symbol": sym,
@@ -222,11 +250,14 @@ def risk_node(state: AgentState) -> AgentState:
                     "allocated_capital": sig.get("allocated_capital", 20000.0),
                     "final_capital": final_cap,
                     "final_quantity": final_qty,
-                    "groq_confidence": g_dec.get("confidence", 80),
-                    "groq_reasoning": g_dec.get("reasoning", ""),
+                    "groq_confidence": conf,
+                    "groq_reasoning": reasoning,
+                    "confluence_tier": item.get("confluence_tier", "SINGLE_STRATEGY"),
+                    "tournament_rank": item.get("rank", 1),
                     "risk_approved": True,
                     "timestamp": r_dec.get("timestamp")
                 }
+
                 # Persist and route to Alpaca MCP
                 try:
                     if sig_type == "ENTER_LONG":
@@ -235,21 +266,19 @@ def risk_node(state: AgentState) -> AgentState:
                         if is_equity and exec_price > 0:
                             try:
                                 from app.engine.contract_selector import select_contract
-                                from app.engine.risk_gate_agent import evaluate_options_risk_gates
                                 from app.engine.options_position_manager import open_options_position
-                                from app.core.database import get_open_positions
 
-                                current_open_pos = get_open_positions()
                                 contract_spec = select_contract(
                                     signal_dict={"symbol": sym, "strategy_id": s_id, "signal_type": sig_type},
                                     underlying_price=exec_price
                                 )
 
-                                # Evaluate all 5 Entry Gates
+                                # Evaluate all 5 Entry Gates with fresh positions
+                                fresh_pos = get_open_positions()
                                 gate_eval = evaluate_options_risk_gates(
                                     contract_spec=contract_spec,
-                                    signal_dict={"symbol": sym, "groq_confidence": g_dec.get("confidence", 80), "strategy_id": s_id},
-                                    open_positions=current_open_pos,
+                                    signal_dict={"symbol": sym, "groq_confidence": conf, "strategy_id": s_id, "suggested_size_pct": g_dec.get("suggested_size_pct", 100)},
+                                    open_positions=fresh_pos,
                                     current_price=exec_price
                                 )
 
@@ -258,7 +287,7 @@ def risk_node(state: AgentState) -> AgentState:
                                 exec_res = route_and_execute(
                                     risk_gate_result=gate_eval,
                                     contract_spec=contract_spec,
-                                    signal_dict={"symbol": sym, "strategy_id": s_id, "signal_type": sig_type, "confidence": g_dec.get("confidence", 80)}
+                                    signal_dict={"symbol": sym, "strategy_id": s_id, "signal_type": sig_type, "confidence": conf}
                                 )
 
                                 if exec_res.get("success"):
@@ -269,7 +298,7 @@ def risk_node(state: AgentState) -> AgentState:
                                         groq_decision=g_dec
                                     )
                                     approved_orders.append(order_payload)
-                                    print(f"  [MCP EXECUTION SUCCESS] ✅ {contract_spec['occ_symbol']} live options order routed through Alpaca MCP.")
+                                    print(f"  [MCP EXECUTION SUCCESS] ✅ Rank #{item.get('rank', 1)}: {contract_spec['occ_symbol']} ({item.get('confluence_tier')}) live options order routed through Alpaca MCP.")
                                 else:
                                     print(f"  [MCP ROUTE NOTICE] {sym} -> {exec_res.get('status')}: {exec_res.get('reason') or exec_res.get('error')}")
 
@@ -301,7 +330,7 @@ def risk_node(state: AgentState) -> AgentState:
 
     state["risk_decisions"] = risk_decisions
     state["approved_orders"] = approved_orders
-    print(f"[RISK] {len(groq_decisions)} evaluated, {len(approved_orders)} approved")
+    print(f"[RISK] {len(selected_candidates)} tournament candidates evaluated, {len(approved_orders)} approved")
     return state
 
 
