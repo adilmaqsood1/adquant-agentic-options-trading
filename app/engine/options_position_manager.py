@@ -95,26 +95,24 @@ def open_options_position(
 
     # Sync to Supabase REST
     try:
-        from app.core.database import get_supabase_client
-        supa = get_supabase_client()
-        if supa:
-            payload = {
-                "strategy_id": contract_spec.get("strategy_id", "options_core"),
-                "underlying_symbol": contract_spec.get("underlying_symbol", "SPY"),
-                "occ_symbol": contract_spec.get("occ_symbol", "UNKNOWN"),
-                "contract_type": contract_spec.get("contract_type", "call"),
-                "strategy_type": contract_spec.get("strategy_type", "long_call"),
-                "strike_price": float(contract_spec.get("strike_price") or 100.0),
-                "expiry_date": str(contract_spec.get("expiry_date") or "2026-10-02"),
-                "dte_at_entry": int(contract_spec.get("dte_at_entry") or 30),
-                "underlying_price": float(contract_spec.get("underlying_price") or 100.0),
-                "premium_paid": float(contract_spec.get("premium_paid") or 5.0),
-                "contracts_qty": int(contract_spec.get("contracts_qty") or 1),
-                "total_cost": float(contract_spec.get("total_cost") or 500.0),
-                "multiplier": 100,
-                "status": "open"
-            }
-            supa.table("options_contracts").insert(payload).execute()
+        from app.core.database import insert_supabase_row
+        payload = {
+            "strategy_id": contract_spec.get("strategy_id", "options_core"),
+            "underlying_symbol": contract_spec.get("underlying_symbol", "SPY"),
+            "occ_symbol": contract_spec.get("occ_symbol", "UNKNOWN"),
+            "contract_type": contract_spec.get("contract_type", "call"),
+            "strategy_type": contract_spec.get("strategy_type", "long_call"),
+            "strike_price": float(contract_spec.get("strike_price") or 100.0),
+            "expiry_date": str(contract_spec.get("expiry_date") or "2026-10-02"),
+            "dte_at_entry": int(contract_spec.get("dte_at_entry") or 30),
+            "underlying_price": float(contract_spec.get("underlying_price") or 100.0),
+            "premium_paid": float(contract_spec.get("premium_paid") or 5.0),
+            "contracts_qty": int(contract_spec.get("contracts_qty") or 1),
+            "total_cost": float(contract_spec.get("total_cost") or 500.0),
+            "multiplier": 100,
+            "status": "open"
+        }
+        insert_supabase_row("options_contracts", payload)
     except Exception:
         pass
 

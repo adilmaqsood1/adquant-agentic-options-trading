@@ -137,7 +137,7 @@ def place_options_order(
         underlying_price=contract_spec.get("underlying_price")
     )
 
-    print(f"[OptionsExecutor] 🎯 Live MCP Order Placed: {occ_symbol} ({contracts_qty} contracts @ ${premium_paid:.2f}) | Order ID: {order_id} | Status: {order_status}")
+    print(f"[OptionsExecutor] [PLACED] Live MCP Order Placed: {occ_symbol} ({contracts_qty} contracts @ ${premium_paid:.2f}) | Order ID: {order_id} | Status: {order_status}")
 
     return {
         "success": True,

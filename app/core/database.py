@@ -550,26 +550,25 @@ def get_portfolio_summary(current_prices: Optional[Dict[str, float]] = None) -> 
     }
 
 
-_supabase_client = None
-
-
-def get_supabase_client():
-    """
-    Initializes and returns a singleton Supabase REST client using SUPABASE_URL and key.
-    """
-    global _supabase_client
-    if _supabase_client is not None:
-        return _supabase_client
+def insert_supabase_row(table_name: str, payload: Dict[str, Any]) -> bool:
+    """Inserts a row directly to Supabase PostgREST endpoint using requests."""
     try:
         supabase_url = os.getenv("SUPABASE_URL")
         supabase_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_KEY")
         if supabase_url and supabase_key:
-            from supabase import create_client
-            _supabase_client = create_client(supabase_url, supabase_key)
-            return _supabase_client
-    except Exception as e:
-        print(f"[Database] Supabase client init notice: {e}")
-    return None
+            import requests
+            url = f"{supabase_url.rstrip('/')}/rest/v1/{table_name}"
+            headers = {
+                "apikey": supabase_key,
+                "Authorization": f"Bearer {supabase_key}",
+                "Content-Type": "application/json",
+                "Prefer": "return=minimal"
+            }
+            r = requests.post(url, headers=headers, json=payload, timeout=5)
+            return r.status_code in [200, 201, 204]
+    except Exception:
+        pass
+    return False
 
 
 def log_cycle(
@@ -589,24 +588,19 @@ def log_cycle(
     if cycle_time is None:
         cycle_time = datetime.datetime.utcnow()
 
-    # 1. Try Supabase REST Client
-    supa = get_supabase_client()
-    if supa:
-        try:
-            payload = {
-                "cycle_time": cycle_time.isoformat() if isinstance(cycle_time, datetime.datetime) else str(cycle_time),
-                "timeframe_scope": timeframe_scope.upper(),
-                "symbols_scanned": int(symbols_scanned),
-                "signals_detected": int(signals_detected),
-                "groq_approved": int(groq_approved),
-                "risk_approved": int(risk_approved),
-                "orders_placed": int(orders_placed),
-                "portfolio_value": float(portfolio_value),
-                "notes": notes
-            }
-            supa.table("agent_cycles").insert(payload).execute()
-        except Exception as supa_err:
-            pass
+    # 1. Try Supabase REST sync
+    payload = {
+        "cycle_time": cycle_time.isoformat() if isinstance(cycle_time, datetime.datetime) else str(cycle_time),
+        "timeframe_scope": timeframe_scope.upper(),
+        "symbols_scanned": int(symbols_scanned),
+        "signals_detected": int(signals_detected),
+        "groq_approved": int(groq_approved),
+        "risk_approved": int(risk_approved),
+        "orders_placed": int(orders_placed),
+        "portfolio_value": float(portfolio_value),
+        "notes": notes
+    }
+    insert_supabase_row("agent_cycles", payload)
 
     # 2. Try direct PostgreSQL pool
     pool = get_pool()

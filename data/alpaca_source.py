@@ -270,7 +270,7 @@ def submit_alpaca_option_order(
             resp = client.post(url, headers=headers, json=payload)
             if resp.status_code in [200, 201]:
                 order_data = resp.json()
-                print(f"[AlpacaExecution] ✅ LIVE OPTION ORDER SUBMITTED: {occ_symbol} ({contracts_qty} contracts {side.upper()} @ ${limit_price if req_type == 'limit' else 'MKT'}) | Order ID: {order_data.get('id')}")
+                print(f"[AlpacaExecution] [SUCCESS] LIVE OPTION ORDER SUBMITTED: {occ_symbol} ({contracts_qty} contracts {side.upper()} @ ${limit_price if req_type == 'limit' else 'MKT'}) | Order ID: {order_data.get('id')}")
                 return {
                     "success": True,
                     "order_id": order_data.get("id"),
@@ -293,7 +293,7 @@ def submit_alpaca_option_order(
                     retry_resp = client.post(url, headers=headers, json=payload)
                     if retry_resp.status_code in [200, 201]:
                         order_data = retry_resp.json()
-                        print(f"[AlpacaExecution] ✅ LIVE OPTION LIMIT ORDER QUEUED: {occ_symbol} | Order ID: {order_data.get('id')}")
+                        print(f"[AlpacaExecution] [QUEUED] LIVE OPTION LIMIT ORDER QUEUED: {occ_symbol} | Order ID: {order_data.get('id')}")
                         return {
                             "success": True,
                             "order_id": order_data.get("id"),
@@ -303,34 +303,7 @@ def submit_alpaca_option_order(
                         }
 
                 err_msg = f"HTTP {resp.status_code}: {resp.text}"
-                print(f"[AlpacaExecution] ❌ Option Order Failed: {err_msg}")
-                return {"success": False, "error": err_msg, "payload": payload}
-    except Exception as e:
-        print(f"[AlpacaExecution] Exception submitting option order: {e}")
-        return {"success": False, "error": str(e)}
-
-    try:
-        import httpx
-        with httpx.Client(timeout=15.0) as client:
-            resp = client.post(url, headers=headers, json=payload)
-            if resp.status_code in [200, 201]:
-                order_data = resp.json()
-                print(f"[AlpacaExecution] ✅ LIVE OPTION ORDER SUBMITTED: {occ_symbol} ({contracts_qty} contracts {side.upper()}) | Order ID: {order_data.get('id')}")
-                return {
-                    "success": True,
-                    "order_id": order_data.get("id"),
-                    "client_order_id": order_data.get("client_order_id"),
-                    "status": order_data.get("status"),
-                    "symbol": order_data.get("symbol"),
-                    "qty": order_data.get("qty"),
-                    "side": order_data.get("side"),
-                    "type": order_data.get("type"),
-                    "filled_avg_price": float(order_data.get("filled_avg_price") or 0.0) if order_data.get("filled_avg_price") else None,
-                    "created_at": order_data.get("created_at")
-                }
-            else:
-                err_msg = f"HTTP {resp.status_code}: {resp.text}"
-                print(f"[AlpacaExecution] ❌ Option Order Failed: {err_msg}")
+                print(f"[AlpacaExecution] [FAILED] Option Order Failed: {err_msg}")
                 return {"success": False, "error": err_msg, "payload": payload}
     except Exception as e:
         print(f"[AlpacaExecution] Exception submitting option order: {e}")

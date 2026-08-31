@@ -297,7 +297,24 @@ def risk_node(state: AgentState) -> AgentState:
                                         contract_spec=contract_spec,
                                         groq_decision=g_dec
                                     )
-                                    approved_orders.append(order_payload)
+                                    options_payload = {
+                                        "strategy_id": s_id,
+                                        "symbol": sym,
+                                        "occ_symbol": contract_spec["occ_symbol"],
+                                        "signal_type": sig_type,
+                                        "timeframe": timeframe_val,
+                                        "execution_price": float(contract_spec.get("premium_paid", 5.0)),
+                                        "allocated_capital": float(contract_spec.get("total_cost", 500.0)),
+                                        "final_capital": float(contract_spec.get("total_cost", 500.0)),
+                                        "final_quantity": int(contract_spec.get("contracts_qty", 1)),
+                                        "groq_confidence": conf,
+                                        "groq_reasoning": reasoning,
+                                        "confluence_tier": item.get("confluence_tier", "SINGLE_STRATEGY"),
+                                        "tournament_rank": item.get("rank", 1),
+                                        "risk_approved": True,
+                                        "timestamp": r_dec.get("timestamp")
+                                    }
+                                    approved_orders.append(options_payload)
                                     print(f"  [MCP EXECUTION SUCCESS] ✅ Rank #{item.get('rank', 1)}: {contract_spec['occ_symbol']} ({item.get('confluence_tier')}) live options order routed through Alpaca MCP.")
                                 else:
                                     print(f"  [MCP ROUTE NOTICE] {sym} -> {exec_res.get('status')}: {exec_res.get('reason') or exec_res.get('error')}")

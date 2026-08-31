@@ -65,10 +65,10 @@ class AlpacaMCPClient:
                     env=env
                 )
                 self.connected = True
-                print(f"[MCP Client] 🔌 Connected to Alpaca MCP Server subprocess (PID: {self.process.pid})")
+                print(f"[MCP Client] Connected to Alpaca MCP Server subprocess (PID: {self.process.pid})")
                 return True
             except Exception as e:
-                print(f"[MCP Client] ❌ Failed to spawn MCP Server subprocess: {e}. Falling back to direct in-process tool bridge.")
+                print(f"[MCP Client] Notice: Falling back to direct in-process MCP tool bridge ({e})")
                 self.connected = True  # In-process bridge active
                 return True
 
@@ -88,7 +88,7 @@ class AlpacaMCPClient:
                         pass
                 self.process = None
             self.connected = False
-            print("[MCP Client] 🔌 Disconnected from Alpaca MCP Server.")
+            print("[MCP Client] Disconnected from Alpaca MCP Server.")
 
     def list_available_tools(self) -> List[Dict[str, Any]]:
         """

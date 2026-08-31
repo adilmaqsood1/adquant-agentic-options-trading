@@ -3,7 +3,7 @@ Execution Router Module
 =======================
 Routes approved quantitative signals to the options executor with pre-trade checks:
   1. Validates 5-Gate Entry approval
-  2. Verifies live pricing freshness (<15% deviation from model premium)
+  2. Syncs true live Alpaca contract quote & dynamically sizes contracts
   3. Executes order via Alpaca MCP
   4. Refreshes performance manager portfolio state and circuit breaker
 """
@@ -27,17 +27,14 @@ def route_and_execute(
     1. Check risk_gate_result["approved"] == True
        → if False: log blocked reason, return
     
-    2. Call inspect_option_contract() with OCC symbol
-       → get live bid/ask
-       → verify premium hasn't moved more than 15% since contract_selector calculated it
-       → if moved >15%: abort, log "stale pricing"
+    2. Inspect Live Contract on Alpaca:
+       → fetch real-time bid/ask quote
+       → dynamically calibrate contracts_qty and total_cost to true market premium
+       → abort only if market quote is invalid or zero
     
-    3. Call place_options_order()
-       → if success: log to PostgreSQL & dispatch signal notification
-       → if failed: log error, do NOT retry automatically (prevents duplicate orders)
+    3. Call place_options_order() via Alpaca MCP
     
     4. Update performance_manager portfolio state
-       → call update_portfolio_state() with new live equity
     """
     sym = signal_dict.get("symbol", "UNKNOWN").upper()
     strat_id = signal_dict.get("strategy_id", "options_core")
@@ -47,7 +44,7 @@ def route_and_execute(
     if not risk_gate_result.get("approved"):
         reason = risk_gate_result.get("reason", "Blocked by risk gate filter.")
         gate_failed = risk_gate_result.get("gate_failed", "Risk Gate")
-        print(f"[ExecutionRouter] ⛔ Signal Blocked for {sym} ({occ_symbol}) | {gate_failed}: {reason}")
+        print(f"[ExecutionRouter] [BLOCKED] {sym} ({occ_symbol}) | {gate_failed}: {reason}")
         return {
             "success": False,
             "status": "RISK_GATE_BLOCKED",
@@ -57,27 +54,30 @@ def route_and_execute(
             "occ_symbol": occ_symbol
         }
 
-    # 2. Inspect Live Contract & Check Pricing Freshness (15% Max Slippage Gate)
+    # 2. Inspect Live Contract & Dynamically Calibrate to True Live Market Quote
     calc_premium = float(contract_spec.get("premium_paid", 5.0))
     live_info = inspect_option_contract(occ_symbol, underlying_symbol=sym)
-    live_premium = float(live_info.get("premium", calc_premium))
+    live_premium = float(live_info.get("premium") or calc_premium)
 
-    if calc_premium > 0:
-        price_deviation = abs(live_premium - calc_premium) / calc_premium
-        if price_deviation > 0.15:
-            err_msg = f"Live contract premium (${live_premium:.2f}) deviated {price_deviation*100:.1f}% from model estimate (${calc_premium:.2f}) > 15% tolerance."
-            print(f"[ExecutionRouter] ⚠️ Aborted {occ_symbol} due to Stale Pricing: {err_msg}")
-            return {
-                "success": False,
-                "status": "STALE_PRICING",
-                "reason": err_msg,
-                "calculated_premium": calc_premium,
-                "live_premium": live_premium,
-                "deviation_pct": round(price_deviation * 100, 2)
-            }
+    if live_premium <= 0.05:
+        err_msg = f"Invalid or non-tradable option premium quote (${live_premium:.2f}) for {occ_symbol}."
+        print(f"[ExecutionRouter] [ABORTED] {occ_symbol}: {err_msg}")
+        return {
+            "success": False,
+            "status": "INVALID_PREMIUM_QUOTE",
+            "reason": err_msg,
+            "live_premium": live_premium
+        }
+
+    # Update contract_spec with true live market premium and calibrate quantity
+    contract_spec["premium_paid"] = round(live_premium, 4)
+    allocated_cap = float(risk_gate_result.get("allocated_capital") or contract_spec.get("total_cost") or 1000.0)
+    calibrated_qty = max(1, int(allocated_cap / (live_premium * 100.0)))
+    contract_spec["contracts_qty"] = calibrated_qty
+    contract_spec["total_cost"] = round(calibrated_qty * live_premium * 100.0, 2)
 
     # 3. Place Options Order via MCP
-    print(f"[ExecutionRouter] 🚀 Routing approved signal to Options Executor: {occ_symbol} ({strat_id})")
+    print(f"[ExecutionRouter] Routing approved signal to Options Executor: {occ_symbol} ({strat_id}) | {calibrated_qty} contracts @ ${live_premium:.2f}")
     order_res = place_options_order(
         contract_spec=contract_spec,
         risk_gate_result=risk_gate_result,
@@ -85,7 +85,7 @@ def route_and_execute(
     )
 
     if not order_res.get("success"):
-        print(f"[ExecutionRouter] ❌ Order placement failed for {occ_symbol}. Auto-retry blocked for safety.")
+        print(f"[ExecutionRouter] Order placement failed for {occ_symbol}. Auto-retry blocked for safety.")
         return {
             "success": False,
             "status": "ORDER_SUBMISSION_FAILED",
@@ -106,5 +106,8 @@ def route_and_execute(
         "order_details": order_res,
         "symbol": sym,
         "occ_symbol": occ_symbol,
+        "contracts_qty": calibrated_qty,
+        "execution_price": live_premium,
+        "total_cost": contract_spec["total_cost"],
         "timestamp": datetime.datetime.utcnow().isoformat()
     }
