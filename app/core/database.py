@@ -348,8 +348,41 @@ def close_position(
 
 def get_open_positions() -> List[Dict[str, Any]]:
     """
-    Returns all rows where status is 'open' as a list of dicts.
+    Returns live open positions directly from Alpaca Broker API when connected,
+    falling back to database / in-memory ledger.
     """
+    try:
+        from dotenv import load_dotenv
+        import os, requests
+        load_dotenv(override=True)
+        alpaca_key = os.getenv("ALPACA_API_KEY")
+        alpaca_sec = os.getenv("ALPACA_API_SECRET")
+        alpaca_base = (os.getenv("ALPACA_BASE_URL") or "https://paper-api.alpaca.markets/v2").rstrip("/")
+
+        if alpaca_key and alpaca_sec:
+            headers = {"APCA-API-KEY-ID": alpaca_key, "APCA-API-SECRET-KEY": alpaca_sec}
+            r = requests.get(f"{alpaca_base}/positions", headers=headers, timeout=3)
+            if r.status_code == 200:
+                raw_positions = r.json()
+                alpaca_list = []
+                for p in raw_positions:
+                    sym = p.get("symbol", "")
+                    alpaca_list.append({
+                        "id": p.get("asset_id"),
+                        "symbol": sym,
+                        "underlying_symbol": sym,
+                        "option_symbol": sym,
+                        "asset_class": "option" if len(sym) > 6 else "equity",
+                        "quantity": abs(float(p.get("qty", 1))),
+                        "entry_price": float(p.get("avg_entry_price", 0.0)),
+                        "current_price": float(p.get("current_price", 0.0)),
+                        "unrealized_pl": float(p.get("unrealized_pl", 0.0)),
+                        "status": "open"
+                    })
+                return alpaca_list
+    except Exception as e:
+        print(f"[Database] Live Alpaca positions sync notice: {e}")
+
     pool = get_pool()
     if pool is not None:
         try:

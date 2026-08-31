@@ -125,6 +125,18 @@ def select_contract(
     except Exception as e:
         print(f"[ContractSelector] Alpaca live option notice: {e}")
 
+    # Strike interval step definition
+    if underlying_price < 25:
+        step = 0.50
+    elif underlying_price < 100:
+        step = 1.00
+    elif underlying_price < 250:
+        step = 2.50
+    elif underlying_price < 500:
+        step = 5.00
+    else:
+        step = 10.00
+
     if real_contract:
         occ_symbol = real_contract.get("symbol")
         strike_price = float(real_contract.get("strike_price"))
@@ -138,17 +150,6 @@ def select_contract(
         expiry_date = raw_expiry + datetime.timedelta(days=days_to_friday)
         actual_dte = max(21, min(45, (expiry_date - today).days))
         T = actual_dte / 365.0
-
-        if underlying_price < 25:
-            step = 0.50
-        elif underlying_price < 100:
-            step = 1.00
-        elif underlying_price < 250:
-            step = 2.50
-        elif underlying_price < 500:
-            step = 5.00
-        else:
-            step = 10.00
 
         min_k = round(underlying_price * 0.80 / step) * step
         max_k = round(underlying_price * 1.20 / step) * step
