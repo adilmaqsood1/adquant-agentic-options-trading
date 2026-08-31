@@ -7,7 +7,7 @@ from app.services.orchestrator import run_cycle
 from app.agents.research_agent import get_latest_insights
 from app.agents.data_agent import get_all_snapshots, get_snapshot_timestamp
 from app.agents.strategy_agents import STRATEGY_AGENTS
-from app.data.alpaca_source import fetch_alpaca_latest_prices
+from data.alpaca_source import fetch_alpaca_latest_prices
 from scheduler import get_scheduler_status, start_scheduler, stop_scheduler
 
 

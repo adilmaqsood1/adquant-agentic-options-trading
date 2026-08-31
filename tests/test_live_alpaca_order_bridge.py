@@ -7,7 +7,7 @@ sys.stdout.reconfigure(encoding="utf-8")
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 load_dotenv()
 
-from app.data.alpaca_source import (
+from data.alpaca_source import (
     submit_alpaca_equity_order,
     submit_alpaca_option_order,
     submit_alpaca_close_position

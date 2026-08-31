@@ -14,7 +14,7 @@ from app.core.database import get_pool, get_open_positions, get_portfolio_summar
 from app.engine.performance_manager import fetch_live_alpaca_equity, fetch_live_alpaca_account, get_current_circuit_breaker, get_all_strategy_performance
 from app.agents.research_agent import get_latest_insights
 from app.agents.data_agent import get_all_snapshots
-from app.data.alpaca_source import fetch_alpaca_latest_prices
+from data.alpaca_source import fetch_alpaca_latest_prices
 from scheduler import get_scheduler_status
 
 router = APIRouter(tags=["Dashboard"])

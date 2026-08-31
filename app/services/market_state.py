@@ -4,13 +4,9 @@ import datetime
 import pandas as pd
 from typing import Dict, List, Optional, Any
 
-from app.data.adapter import get_data
-from app.data.kaggle_source import POSSIBLE_PATHS
+from data.adapter import get_data
+from data.kaggle_source import POSSIBLE_PATHS
 
-# ─────────────────────────────────────────────────────────────────────────────
-# ─────────────────────────────────────────────────────────────────────────────
-# 1. MASTER UNIVERSE DEFINITIONS (100% Optionable US Equities & ETFs on Alpaca)
-# ─────────────────────────────────────────────────────────────────────────────
 
 # High-Liquidity Primary Options Universe (Tight Bid/Ask Spreads, High Open Interest)
 OPTIONS_CORE_UNIVERSE: List[str] = [
@@ -48,9 +44,7 @@ ALL_SP500_SYMBOLS: List[str] = get_all_sp500_symbols()
 # Combined Optionable US Equities (S&P 500 + Nasdaq union)
 ALL_US_EQUITIES: List[str] = sorted(list(set(ALL_SP500_SYMBOLS + ALL_NASDAQ_SYMBOLS + OPTIONS_CORE_UNIVERSE)))
 
-# ─────────────────────────────────────────────────────────────────────────────
-# 2. STRATEGY MARKET CONFIGURATION (Full Universe: 521 Optionable US Equities & ETFs)
-# ─────────────────────────────────────────────────────────────────────────────
+
 STRATEGY_MARKET_CONFIG: Dict[str, Dict[str, Any]] = {
     # 2H Fast Momentum: High-Beta Optionable Tech Equities & Indices
     "momentum_ema_rsi_adx": {

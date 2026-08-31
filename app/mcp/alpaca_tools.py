@@ -30,7 +30,7 @@ from app.engine.contract_selector import select_contract
 from app.engine.risk_gate_agent import evaluate_options_risk_gates
 from app.engine.options_monitor_agent import run_options_monitor_cycle
 from app.engine.performance_manager import get_current_circuit_breaker, get_dynamic_allocation, get_all_strategy_performance
-from app.data.alpaca_source import fetch_alpaca_latest_prices
+from data.alpaca_source import fetch_alpaca_latest_prices
 
 import httpx
 

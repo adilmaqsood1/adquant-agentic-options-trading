@@ -16,7 +16,7 @@ from typing import Dict, Any, Optional
 import pandas as pd
 import numpy as np
 
-from app.data.alpaca_source import fetch_alpaca_stock_bars, fetch_alpaca_crypto_bars, fetch_alpaca_latest_prices
+from data.alpaca_source import fetch_alpaca_stock_bars, fetch_alpaca_crypto_bars, fetch_alpaca_latest_prices
 from app.agents.market_context_agent import get_market_context
 from app.services.technical_indicators import rsi, sma, ema, atr
 from app.core.database import get_open_positions

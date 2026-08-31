@@ -40,7 +40,7 @@ def compute_iv_rank(symbol: str, current_hv: Optional[float] = None) -> Dict[str
     # 1. Fetch historical bars for symbol
     df = None
     try:
-        from app.data.data_loader import get_market_data
+        from data.data_loader import get_market_data
         df = get_market_data(clean_sym, source="alpaca", interval="1d")
     except Exception:
         pass

@@ -410,7 +410,7 @@ def report_node(state: AgentState) -> AgentState:
     return state
 
 
-# ─── Layer 1: Data Agent Node ────────────────────────────────────────────────
+#Layer 1: Data Agent Node
 def data_agent_node(state: AgentState) -> AgentState:
     """Layer 1 — Builds FeatureSnapshot for every symbol. Pure Python, no LLM."""
     fresh_bars = state.get("fresh_bars", {})
@@ -426,7 +426,7 @@ def data_agent_node(state: AgentState) -> AgentState:
     return state
 
 
-# ─── Layer 2: Strategy Agents Node ───────────────────────────────────────────
+#Layer 2: Strategy Agents Node
 def strategy_agents_node(state: AgentState) -> AgentState:
     """Layer 2 — Runs strategy evaluation (micro-agents & mathematical signal detection)."""
     snapshots    = state.get("feature_snapshots", {})
@@ -464,7 +464,7 @@ def strategy_agents_node(state: AgentState) -> AgentState:
 
 
 
-# ─── Layer 3: Research Agent Node ────────────────────────────────────────────
+#Layer 3: Research Agent Node
 def research_agent_node(state: AgentState) -> AgentState:
     """Layer 3 — Research Agent: market regime analysis + novel strategy generation."""
     all_signals   = state.get("all_signals", [])

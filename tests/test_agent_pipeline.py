@@ -12,7 +12,7 @@ print("=" * 70)
 print("AUTONOMOUS 3-LAYER AGENT PIPELINE -- IMPORT & SMOKE TEST")
 print("=" * 70)
 
-# -- Layer 1 ------------------------------------------------------------------
+# -- Layer 1 
 print("\n[1] Testing Data Agent imports...")
 try:
     from app.agents.data_agent import run_data_agent, compute_feature_snapshot, get_all_snapshots
@@ -21,7 +21,7 @@ except Exception as e:
     print(f"    [FAIL] data_agent.py: {e}")
     sys.exit(1)
 
-# -- Layer 2 ------------------------------------------------------------------
+# -- Layer 2 
 print("\n[2] Testing Strategy Agents imports...")
 try:
     from app.agents.strategy_agents import STRATEGY_AGENTS, run_strategy_agent, run_all_strategy_agents
@@ -32,7 +32,7 @@ except Exception as e:
     print(f"    [FAIL] strategy_agents.py: {e}")
     sys.exit(1)
 
-# -- Layer 3 ------------------------------------------------------------------
+# -- Layer 3 
 print("\n[3] Testing Research Agent imports...")
 try:
     from app.agents.research_agent import run_research_agent, get_latest_insights
@@ -41,7 +41,7 @@ except Exception as e:
     print(f"    [FAIL] research_agent.py: {e}")
     sys.exit(1)
 
-# -- Orchestrator --------------------------------------------------------------
+# -- Orchestrator 
 print("\n[4] Testing Orchestrator imports...")
 try:
     from app.services.orchestrator import build_graph, run_cycle, AgentState
@@ -52,7 +52,7 @@ except Exception as e:
     import traceback; traceback.print_exc()
     sys.exit(1)
 
-# -- Mini FeatureSnapshot test -------------------------------------------------
+# -- Mini FeatureSnapshot test 
 print("\n[5] Testing FeatureSnapshot computation with synthetic data...")
 try:
     import pandas as pd
