@@ -2,13 +2,25 @@ from fastapi import APIRouter, HTTPException
 from typing import Dict, Any, Optional, List
 from pydantic import BaseModel
 
-from app.core.database import get_open_positions, get_portfolio_summary, get_pool
-from app.services.orchestrator import run_cycle
-from app.agents.research_agent import get_latest_insights
-from app.agents.data_agent import get_all_snapshots, get_snapshot_timestamp
-from app.agents.strategy_agents import STRATEGY_AGENTS
-from app.data.alpaca_source import fetch_alpaca_latest_prices
-from scheduler import get_scheduler_status, start_scheduler, stop_scheduler
+try:
+    from app.core.database import get_open_positions, get_portfolio_summary, get_pool
+    from app.services.orchestrator import run_cycle
+    from app.agents.research_agent import get_latest_insights
+    from app.agents.data_agent import get_all_snapshots, get_snapshot_timestamp
+    from app.agents.strategy_agents import STRATEGY_AGENTS
+    from app.data.alpaca_source import fetch_alpaca_latest_prices
+except ImportError:
+    from core.database import get_open_positions, get_portfolio_summary, get_pool
+    from services.orchestrator import run_cycle
+    from agents.research_agent import get_latest_insights
+    from agents.data_agent import get_all_snapshots, get_snapshot_timestamp
+    from agents.strategy_agents import STRATEGY_AGENTS
+    from data.alpaca_source import fetch_alpaca_latest_prices
+
+try:
+    from scheduler import get_scheduler_status, start_scheduler, stop_scheduler
+except ImportError:
+    from app.scheduler import get_scheduler_status, start_scheduler, stop_scheduler
 
 
 router = APIRouter(prefix="/api/agent", tags=["Autonomous Agent"])
