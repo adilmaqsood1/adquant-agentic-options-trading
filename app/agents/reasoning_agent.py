@@ -109,9 +109,13 @@ def reason_about_signal(
         "avg_holding_days": 4.0
     })
 
-    # Portfolio state
-    total_allocated = portfolio_summary.get("total_allocated", 0.0)
-    total_open_positions = portfolio_summary.get("total_open_positions", 0)
+    # Portfolio state & Live Capital
+    live_equity = float(portfolio_summary.get("total_equity") or portfolio_summary.get("portfolio_value") or 100_000.0)
+    cash_in_hand = float(portfolio_summary.get("cash_reserve") or portfolio_summary.get("cash") or (live_equity * 0.25))
+    options_budget_total = float(portfolio_summary.get("options_budget") or (live_equity * 0.75))
+    total_allocated = float(portfolio_summary.get("total_allocated") or portfolio_summary.get("currently_deployed") or 0.0)
+    remaining_options_budget = max(0.0, options_budget_total - total_allocated)
+    total_open_positions = int(portfolio_summary.get("total_open_positions") or 0)
     strategies_active = portfolio_summary.get("strategies_active", [])
 
     # 2. Build Market Context Block (Macro FNG + Fundamentals + VADER Sentiment)
@@ -119,63 +123,61 @@ def reason_about_signal(
 
     # 3. Build Prompts
     system_prompt = (
-        "You are a quantitative trading risk analyst within an autonomous AI options trading system. "
-        "You are the critical gate between signal detection and live capital deployment on Alpaca's paper trading account. "
-        "Your job is to evaluate trading signals and decide whether to approve or reject them for options execution.\n\n"
-        "ANALYSIS PROTOCOL — Execute in this exact order:\n"
-        "1. ASSESS signal quality: strategy backtest credentials (Profit Factor, Calmar, Win Rate) — "
-        "strategies with PF > 2.0 and Calmar > 2.0 deserve higher baseline confidence\n"
-        "2. EVALUATE technical context: price momentum, volume confirmation, SMA alignment, "
-        "and whether the signal has structural support (not just a single indicator blip)\n"
-        "3. INCORPORATE macro sentiment: Fear & Greed Index bias, news sentiment polarity, "
-        "and fundamental valuation — extreme greed (>75) or fear (<25) should modulate confidence\n"
-        "4. CHECK portfolio exposure: how much capital is already deployed, concentration risk\n"
-        "5. SYNTHESIZE a final confidence score (0-100) that honestly reflects your conviction\n"
-        "6. SET go=false if confidence < 60 — capital preservation over returns\n\n"
-        "Your approval routes signals to Black-Scholes options pricing and live Alpaca execution. "
-        "False approvals waste premium on theta decay. Be conservative, data-driven, and precise. "
-        "Always respond in valid JSON only."
+        "You are an elite quantitative AI options portfolio manager operating with full autonomous agency. "
+        "You evaluate real-time signals and make autonomous decisions on capital deployment, position sizing ($), "
+        "and profit targets based on opportunity quality, market regime, portfolio equity, and available cash in hand.\n\n"
+        "ANALYSIS PROTOCOL:\n"
+        "1. ASSESS signal quality: backtest metrics (Profit Factor, Calmar, Win Rate), multi-timeframe confluence\n"
+        "2. EVALUATE technical context: price momentum, volume confirmation, SMA alignment, support/resistance\n"
+        "3. INCORPORATE macro sentiment: Fear & Greed Index, news sentiment, and valuation multiples\n"
+        "4. AUTONOMOUS CAPITAL SIZING: Determine optimal capital allocation ($3,000 to $12,000 per trade) "
+        "based on conviction tier and remaining options budget to ensure 70-75% total capital deployment\n"
+        "5. SET go=false if confidence < 60\n\n"
+        "Always respond in pure valid JSON only."
     )
 
     user_prompt = f"""
-Evaluate this active trading signal:
+Evaluate this active options trading opportunity:
 
-1. SIGNAL CONTEXT:
-- Strategy Name: {strategy_id}
-- Strategy Backtest Credentials: Profit Factor = {creds['profit_factor']}, Calmar = {creds['calmar']}, Max DD = {creds['max_dd']}%, Win Rate = {creds['win_rate']}%, Avg Hold = {creds['avg_holding_days']} days
-- Symbol: {symbol}
+1. SIGNAL & ASSET CONTEXT:
+- Strategy: {strategy_id} (PF: {creds['profit_factor']}, Calmar: {creds['calmar']}, Win Rate: {creds['win_rate']}%)
+- Underlying Symbol: {symbol}
 - Timeframe: {timeframe}
-- Signal Type: {signal_type}
-- Current Execution Price: ${current_price:,.2f}
-- Last Bar Timestamp: {last_bar_time}
+- Signal Action: {signal_type}
+- Underlying Price: ${current_price:,.2f}
+- Last Bar Time: {last_bar_time}
 
-2. MARKET & PRICE CONTEXT (Last 5 Bars):
+2. TECHNICAL CONTEXT (Last 5 Bars):
 {last_5_table}
 - Above 50-bar SMA: {above_50_sma}
 - 5-bar Price Momentum: {price_change_5b_pct:+}%
 - Current Volume vs 20-bar Average: {vol_vs_20_avg_pct:+}%
 
-3. MACRO, VALUATION & NEWS SENTIMENT CONTEXT:
+3. MACRO & NEWS SENTIMENT:
 {market_context_str}
 
-4. PORTFOLIO STATE:
-- Total Capital Currently Allocated: ${total_allocated:,.2f}
-- Current Number of Open Positions: {total_open_positions}
-- Active Strategies in Portfolio: {strategies_active}
+4. LIVE PORTFOLIO & CASH STATE:
+- Total Account Equity: ${live_equity:,.2f}
+- Available Cash in Hand: ${cash_in_hand:,.2f}
+- Total 75% Options Capital Budget: ${options_budget_total:,.2f}
+- Options Capital Currently Deployed: ${total_allocated:,.2f}
+- Remaining Options Budget to Deploy: ${remaining_options_budget:,.2f}
+- Active Open Positions: {total_open_positions}
+- Active Strategies: {strategies_active}
 
-5. INSTRUCTIONS:
-Evaluate this signal and return a pure JSON object with exactly these keys:
+5. AUTONOMOUS INSTRUCTIONS:
+Evaluate this setup and return a pure JSON object with exactly these keys:
 {{
   "confidence": <integer 0-100>,
   "go": <true or false>,
-  "reasoning": "<2-3 concise sentences explaining your quantitative risk decision incorporating technical, macro FNG, valuation and sentiment factors>",
+  "conviction_tier": "HIGH_ALPHA" | "CONFLUENCE_CORE" | "TACTICAL",
+  "recommended_capital_usd": <float dollar amount to deploy, e.g. 4000.00 to 12000.00 based on opportunity strength and remaining budget>,
+  "dynamic_profit_target_pct": <float target percentage e.g. 50.0 to 80.0>,
+  "dynamic_stop_loss_pct": <float stop loss percentage e.g. -25.0 to -35.0>,
+  "reasoning": "<2-3 concise sentences explaining your quantitative risk decision incorporating technical, macro FNG, valuation and cash deployment factors>",
   "risk_concern": "<specific risk factor if any, or null>",
   "suggested_size_pct": <integer 50-100>
 }}
-
-Decision Rules:
-- Incorporate Fear & Greed, valuation P/E, and news sentiment alongside technicals.
-- 'suggested_size_pct' is the percentage (50-100) of allocated capital to commit.
 """
 
     try:
@@ -192,13 +194,16 @@ Decision Rules:
         go = bool(parsed.get("go", False))
         reasoning = str(parsed.get("reasoning", "No reasoning provided."))
         risk_concern = parsed.get("risk_concern")
+        conviction_tier = str(parsed.get("conviction_tier", "CONFLUENCE_CORE"))
+        rec_capital = float(parsed.get("recommended_capital_usd") or 6000.0)
+        dyn_profit_target = float(parsed.get("dynamic_profit_target_pct") or 60.0)
+        dyn_stop_loss = float(parsed.get("dynamic_stop_loss_pct") or -35.0)
         suggested_size_pct = int(parsed.get("suggested_size_pct", 100))
 
-        # Enforce hard safety rule: confidence < 60 must set go to False
+        # Enforce safety threshold
         if confidence < 60:
             go = False
 
-        # Clamp suggested_size_pct between 50 and 100
         suggested_size_pct = max(50, min(100, suggested_size_pct))
 
         return {
@@ -206,6 +211,10 @@ Decision Rules:
             "symbol": symbol,
             "go": go,
             "confidence": confidence,
+            "conviction_tier": conviction_tier,
+            "recommended_capital_usd": rec_capital,
+            "dynamic_profit_target_pct": dyn_profit_target,
+            "dynamic_stop_loss_pct": dyn_stop_loss,
             "reasoning": reasoning,
             "risk_concern": risk_concern,
             "suggested_size_pct": suggested_size_pct,

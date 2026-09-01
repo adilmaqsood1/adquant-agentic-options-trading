@@ -3,8 +3,10 @@ import datetime
 from typing import Dict, Any, List, Optional, Tuple
 from app.core.database import get_open_positions, close_position
 from app.engine.options_position_manager import close_options_position, snapshot_greeks
-from app.engine.options_pricing import BlackScholesEngine
-from data.alpaca_source import fetch_alpaca_latest_prices
+try:
+    from app.data.alpaca_source import fetch_alpaca_latest_prices
+except ImportError:
+    from data.alpaca_source import fetch_alpaca_latest_prices
 
 def run_options_monitor_cycle(
     live_prices: Optional[Dict[str, float]] = None,

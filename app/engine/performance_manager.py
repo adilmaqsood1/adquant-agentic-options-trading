@@ -158,7 +158,7 @@ def get_active_budget_with_reserve(
     if (strategy_id == "rsi_oversold_reversal" 
         and groq_confidence >= 85
         and _reserve_release_allowed()):
-        print(f"[PerformanceManager] 🚀 Cash Reserve Released (+10% equity) for high-conviction RSI Oversold Reversal!")
+        print(f"[PerformanceManager] [RESERVE_RELEASED] Cash Reserve Released (+10% equity) for high-conviction RSI Oversold Reversal!")
 
         # Log the release to PostgreSQL so 48h gate works
         try:
@@ -204,8 +204,8 @@ def get_portfolio_budget_breakdown(
         active_options = equity * 0.75
 
     cash_reserve = equity - active_options
-    high_conviction = min(5_000.0, max(500.0, equity * 0.05))
-    medium_conviction = min(3_000.0, max(500.0, equity * 0.03))
+    high_conviction = min(12_000.0, max(2_500.0, equity * 0.12))
+    medium_conviction = min(8_000.0, max(1_500.0, equity * 0.08))
     options_reserve = active_options * 0.25
 
     return {
@@ -543,9 +543,9 @@ def get_dynamic_allocation(
         groq_confidence=groq_confidence
     )
     active_base = breakdown["active_options_budget"]
-    base_allocation = active_base * max(quarter_kelly, 0.01)
-    base_allocation = max(base_allocation, active_base * 0.01)   # floor 1%
-    base_allocation = min(base_allocation, active_base * 0.08)   # ceiling 8%
+    base_allocation = active_base * max(quarter_kelly, 0.08)
+    base_allocation = max(base_allocation, active_base * 0.06)   # floor 6% (~$4,500 on $75k)
+    base_allocation = min(base_allocation, active_base * 0.16)   # ceiling 16% (~$12,000)
 
     # 4. Volatility ratio
     vol_ratio = 1.0
@@ -555,10 +555,10 @@ def get_dynamic_allocation(
     # 5. Groq confidence scalar and conviction caps
     if groq_confidence >= 85:
         confidence_scalar = 1.0
-        max_conviction_cap = breakdown["high_conviction_max"]  # max $5,000
+        max_conviction_cap = breakdown["high_conviction_max"]  # max $12,000
     elif groq_confidence >= 75:
-        confidence_scalar = 0.7
-        max_conviction_cap = breakdown["medium_conviction_max"] # max $3,000
+        confidence_scalar = 0.75
+        max_conviction_cap = breakdown["medium_conviction_max"] # max $8,000
     else:
         return {
             "approved": False,
@@ -575,12 +575,11 @@ def get_dynamic_allocation(
         * confidence_scalar
     )
 
-    # 7. Apply conviction bucket caps ($5k / $3k) and hard portfolio risk cap
+    # 7. Apply conviction bucket caps ($12k / $8k) and hard portfolio risk cap
     final_allocation = min(final_allocation, max_conviction_cap)
 
-    # For options, max loss is strictly the premium outlay (total dollar cost).
-    # The 3% portfolio risk cap directly limits the maximum position cost.
-    max_portfolio_risk = portfolio_value * 0.03  # Max $3,000 on $100K portfolio
+    # For options, single-trade risk cap is 10% of portfolio ($10,000 on $100K)
+    max_portfolio_risk = portfolio_value * 0.10
     final_allocation = min(final_allocation, max_portfolio_risk)
 
     final_allocation = round(final_allocation, 2)

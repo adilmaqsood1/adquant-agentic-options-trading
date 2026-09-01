@@ -1,8 +1,8 @@
 import math
 from typing import Dict, Any, List, Optional
 
-MAX_CONTRACTS_PER_TRADE = 3
-MIN_OPTION_TRADE_SIZE = 200.0   # minimum trade capital for 1 contract
+MAX_CONTRACTS_PER_TRADE = 30
+MIN_OPTION_TRADE_SIZE = 500.0   # minimum trade capital for options sizing
 
 # Known high-liquidity names: fast-pass Gate 4 without any warning.
 # Any other US equity/ETF is still allowed — this list just skips the warning log.
@@ -271,14 +271,18 @@ def evaluate_options_risk_gates(
             "circuit_breaker_level": cb_level,
         }
 
-    trade_budget = dyn["final_allocation"]
-    perf_mode = dyn["mode"]
-    audit = dyn["audit_trail"]
+    # Step B: AI Autonomous Sizing Selection
+    ai_requested_capital = float(signal_dict.get("recommended_capital_usd") or 0.0)
+    if ai_requested_capital > 0:
+        trade_budget = ai_requested_capital
+        perf_mode = signal_dict.get("conviction_tier", "AI_AUTONOMOUS")
+    else:
+        trade_budget = dyn["final_allocation"]
+        perf_mode = dyn["mode"]
+        
+    audit = dyn.get("audit_trail", {})
 
-    # Step B2: Apply LLM suggested_size_pct as an additional scalar
-    # Performance Manager sets the base budget via Quarter Kelly + CB + vol ratio
-    # LLM suggested_size_pct scales it down when conviction is lower (50-100%)
-    # Both factors are visible in the audit trail for full transparency
+    # Step B2: Apply LLM suggested_size_pct if specified
     llm_size_pct = int(signal_dict.get("suggested_size_pct", 100))
     llm_size_pct = max(50, min(100, llm_size_pct))
     llm_size_scalar = llm_size_pct / 100.0
@@ -288,28 +292,18 @@ def evaluate_options_risk_gates(
     audit["llm_size_scalar"] = llm_size_scalar
 
     # Step C: IV scalar — differentiates long vs short premium at every regime.
-    # Note: vol_ratio inside get_dynamic_allocation correctly uses the UNDERLYING
-    # stock's ATR (atr_14 / current_price), NOT the option's own price movement.
-    # The option's IV is already captured here via iv_rank — no double-counting.
     is_long_option = strategy_type in ["long_call", "long_put"]
 
     if iv_rank < 35.0:
-        # Cheap IV: ideal for buying, less attractive for selling
-        iv_scalar = 1.0 if is_long_option else 0.5
+        iv_scalar = 1.0 if is_long_option else 0.6
     elif iv_rank <= 55.0:
-        # Moderate IV: buy at half size, sell at 80%
-        iv_scalar = 0.5 if is_long_option else 0.8
+        iv_scalar = 0.85 if is_long_option else 0.9
     else:
-        # High IV (>55): NEVER buy long options (theta/vega too expensive)
-        #               Short premium is now at its BEST — size up to 1.2x
         iv_scalar = 0.0 if is_long_option else 1.2
 
     adjusted_budget = trade_budget * iv_scalar
 
     # Step D: Contract count from adjusted budget.
-    # For spreads, contract_selector.py already sets premium_paid = net_debit
-    # (long_premium - short_premium_received), so cost_per_contract correctly
-    # reflects the actual cash outlay, not the gross long-leg premium.
     cost_per_contract = premium_per_share * 100.0
     if cost_per_contract <= 0:
         return {"approved": False, "gate_failed": "Pricing Error", "reason": "Option premium is zero or negative."}
@@ -317,9 +311,9 @@ def evaluate_options_risk_gates(
     contracts = int(math.floor(adjusted_budget / cost_per_contract))
     contracts = max(1, min(contracts, MAX_CONTRACTS_PER_TRADE))
 
-    # Step E: Hard 3% portfolio risk cap
+    # Step E: Solvency & 12% portfolio single-trade risk cap (max $12,000 on $100K portfolio)
     total_risk = premium_per_share * contracts * 100.0
-    max_portfolio_risk = live_portfolio_value * 0.03
+    max_portfolio_risk = live_portfolio_value * 0.12
 
     if total_risk > max_portfolio_risk:
         contracts = max(1, int(math.floor(max_portfolio_risk / cost_per_contract)))
@@ -328,7 +322,7 @@ def evaluate_options_risk_gates(
             return {
                 "approved": False,
                 "gate_failed": "Gate 5: Portfolio Risk Cap",
-                "reason": f"1-contract minimum (${total_risk:.2f}) exceeds 3% risk cap (${max_portfolio_risk:.2f})."
+                "reason": f"1-contract minimum (${total_risk:.2f}) exceeds 10% risk cap (${max_portfolio_risk:.2f})."
             }
 
     total_committed = round(contracts * cost_per_contract, 2)

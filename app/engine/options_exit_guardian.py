@@ -107,14 +107,15 @@ def evaluate_position_exit_with_ai(
     # ─────────────────────────────────────────────────────────────────────────
     # 2. LEVEL 2: DEEPSEEK-V3.2 DYNAMIC AI EXIT GUARDIAN (Decision-Point Filtered)
     # ─────────────────────────────────────────────────────────────────────────
-    # Decision Point Gate: Only invoke LLM if position is at a meaningful inflection point
-    is_decision_point = (pnl_pct >= 35.0 or pnl_pct <= -15.0 or current_dte <= 21)
+    # Decision Point Gate: Only invoke LLM if position is at a real inflection point
+    # (Allow trades room to breathe between -20% and +40% without premature micro-exits)
+    is_decision_point = (pnl_pct >= 45.0 or pnl_pct <= -25.0 or current_dte <= 16)
 
     if is_decision_point:
         try:
             from app.services.llm_client import query_llm_json
 
-            prompt = f"""Analyze the following active options position and decide whether to HOLD, TRAIL_STOP, EARLY_TAKE_PROFIT, or EARLY_DEFENSIVE_EXIT.
+            prompt = f"""You are an institutional quantitative options manager. Analyze this active options position:
 
 POSITION DATA:
 - Symbol: {sym} (OCC: {occ_symbol})
@@ -128,11 +129,11 @@ POSITION DATA:
 - Greeks: Delta {greeks.get('delta', 0):.2f}, Gamma {greeks.get('gamma', 0):.3f}, Theta ${greeks.get('theta', 0):.2f}/day
 - Market Regime: {market_regime}
 
-DECISION RULES:
-1. HOLD: Favorable momentum, healthy DTE (>14), and upside room remaining.
-2. TRAIL_STOP: Large profit (+40% to +80%+) with strong trend continuation. Set trailing stop floor to lock in minimum gains while letting the runner expand.
-3. EARLY_TAKE_PROFIT: Profit is +30% to +60% and momentum is exhausting, near major resistance, or theta is outgrowing delta.
-4. EARLY_DEFENSIVE_EXIT: Position has mild loss (-10% to -25%) and market regime has turned hostile/breakdown, avoiding a full -35% stop.
+INSTITUTIONAL RULES:
+1. Default to HOLD: If DTE > 14 and PnL has not reached target (+50%+), HOLD to let the option strategy develop. Do NOT exit on minor noise.
+2. TRAIL_STOP: If profit is +40% to +80%+ and momentum is strong, set TRAIL_STOP (should_close: false) to lock in a floor while letting gains run.
+3. EARLY_TAKE_PROFIT: ONLY if profit exceeds +50% to +80% AND momentum has clearly saturated or theta decay is overtaking delta.
+4. EARLY_DEFENSIVE_EXIT: ONLY if severe technical breakdown occurs with PnL < -25% before the hard -35% stop.
 
 Output ONLY valid JSON matching this exact schema:
 {{
