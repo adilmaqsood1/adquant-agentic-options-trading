@@ -190,12 +190,15 @@ def risk_node(state: AgentState) -> AgentState:
     risk_decisions: List[Dict[str, Any]] = []
     approved_orders: List[Dict[str, Any]] = []
 
-    # 1. Multi-Strategy Confluence Detection
+    # 1. Multi-Strategy Confluence Detection & Order Hygiene
     from app.engine.opportunity_ranker import detect_confluence_opportunities, rank_opportunities_tournament
     from app.engine.risk_gate_agent import compute_dynamic_options_capacity, evaluate_options_risk_gates
-    from app.core.database import get_open_positions
-
     from app.engine.options_position_manager import is_underlying_held, get_open_options_positions
+    from app.execution.options_executor import cancel_stale_working_orders
+
+    # Clean up any stale unfulfilled limit orders (>15m) to ensure capacity is not blocked
+    cancel_stale_working_orders(max_age_minutes=15)
+
     current_open_pos = get_open_options_positions()
     capacity_info = compute_dynamic_options_capacity(open_positions=current_open_pos)
     available_slots = max(0, capacity_info["max_simultaneous"] - len(current_open_pos))
@@ -277,8 +280,8 @@ def risk_node(state: AgentState) -> AgentState:
                                     underlying_price=exec_price
                                 )
 
-                                # Evaluate all 5 Entry Gates with fresh positions
-                                fresh_pos = get_open_positions()
+                                # Evaluate all 5 Entry Gates with fresh positions directly from Alpaca
+                                fresh_pos = get_open_options_positions()
                                 gate_eval = evaluate_options_risk_gates(
                                     contract_spec=contract_spec,
                                     signal_dict={"symbol": sym, "groq_confidence": conf, "strategy_id": s_id, "suggested_size_pct": g_dec.get("suggested_size_pct", 100)},

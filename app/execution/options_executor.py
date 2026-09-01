@@ -260,3 +260,49 @@ def get_open_options_positions_from_alpaca() -> List[Dict[str, Any]]:
         print(f"[OptionsExecutor] ✅ Position sync verified: Alpaca & PostgreSQL in 100% agreement ({len(alpaca_positions)} active).")
 
     return alpaca_positions
+
+
+def cancel_stale_working_orders(max_age_minutes: int = 15) -> int:
+    """
+    Cancels unfulfilled working limit orders that are older than max_age_minutes
+    to prevent stale pending orders from blocking new trade capacity.
+    """
+    try:
+        import requests
+        from dotenv import load_dotenv
+        load_dotenv(override=True)
+        alpaca_key = os.getenv("ALPACA_API_KEY")
+        alpaca_sec = os.getenv("ALPACA_API_SECRET")
+        alpaca_base = (os.getenv("ALPACA_BASE_URL") or "https://paper-api.alpaca.markets/v2").rstrip("/")
+
+        if not alpaca_key or not alpaca_sec:
+            return 0
+
+        headers = {"APCA-API-KEY-ID": alpaca_key, "APCA-API-SECRET-KEY": alpaca_sec}
+        r = requests.get(f"{alpaca_base}/orders?status=open", headers=headers, timeout=6)
+        if r.status_code != 200:
+            return 0
+
+        orders = r.json()
+        now = datetime.datetime.utcnow()
+        cancelled_count = 0
+
+        for o in orders:
+            sub_at_str = o.get("submitted_at") or o.get("created_at")
+            if sub_at_str:
+                try:
+                    sub_time = datetime.datetime.fromisoformat(sub_at_str.replace("Z", "+00:00")).replace(tzinfo=None)
+                    age_mins = (now - sub_time).total_seconds() / 60.0
+                    if age_mins >= max_age_minutes:
+                        o_id = o.get("id")
+                        del_res = requests.delete(f"{alpaca_base}/orders/{o_id}", headers=headers, timeout=5)
+                        if del_res.status_code in [200, 204]:
+                            cancelled_count += 1
+                            print(f"[OptionsExecutor] 🗑️ Cancelled stale working order {o.get('symbol')} (Age: {age_mins:.1f}m)")
+                except Exception:
+                    pass
+
+        return cancelled_count
+    except Exception as e:
+        print(f"[OptionsExecutor] Notice on cancel_stale_working_orders: {e}")
+        return 0
