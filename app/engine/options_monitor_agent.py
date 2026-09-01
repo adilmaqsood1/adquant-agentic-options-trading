@@ -31,14 +31,20 @@ def run_options_monitor_cycle(
       -> Close immediately if opposite strategy signal fires.
     """
     open_pos = get_open_positions()
-    options_pos = [p for p in open_pos if p.get("asset_class") == "option" or bool(p.get("option_symbol"))]
+    # ONLY monitor filled active positions — NEVER monitor pending working limit orders
+    options_pos = [
+        p for p in open_pos 
+        if (p.get("asset_class") == "option" or bool(p.get("option_symbol"))) 
+        and not p.get("is_working_order") 
+        and p.get("status") != "pending_order"
+    ]
 
     if not options_pos:
         return {
             "positions_monitored": 0,
             "exits_triggered": 0,
             "actions": [],
-            "status": "No active options positions to monitor."
+            "status": "No filled active options positions to monitor (pending working orders waiting for market fill)."
         }
 
     # Fetch live prices if not provided
@@ -54,29 +60,56 @@ def run_options_monitor_cycle(
         occ_symbol = p.get("option_symbol") or f"{sym}_OPT"
         strategy_id = p.get("strategy_id", "options_core")
         entry_prem = float(p.get("contract_premium") or p.get("entry_price") or 0.0)
-        contracts = int(p.get("contracts") or 1)
+        contracts = int(p.get("contracts") or p.get("quantity") or 1)
         strike = float(p.get("strike_price") or 0.0)
-        opt_type = p.get("option_type") or "call"
+        opt_type = str(p.get("option_type") or "call").lower()
         exp_date_str = p.get("expiration_date")
         strategy_type = p.get("strategy_type", "long_call")
 
-        # 1. Compute DTE remaining
         today = datetime.date.today()
         dte = 30
-        if exp_date_str:
+
+        # Parse strike and expiry from OCC symbol if missing from position record
+        if occ_symbol and (strike <= 0 or not exp_date_str):
+            try:
+                type_idx = -1
+                for i in range(len(occ_symbol) - 9, len(occ_symbol) - 8 + 1):
+                    if occ_symbol[i] in ['C', 'P']:
+                        type_idx = i
+                        break
+                if type_idx == -1:
+                    type_idx = occ_symbol.rfind('C') if 'C' in occ_symbol else occ_symbol.rfind('P')
+                if type_idx != -1:
+                    opt_type = "call" if occ_symbol[type_idx] == "C" else "put"
+                    date_part = occ_symbol[type_idx-6:type_idx]
+                    strike_part = occ_symbol[type_idx+1:]
+                    if strike_part.isdigit():
+                        strike = float(strike_part) / 1000.0
+                    exp_year = int("20" + date_part[0:2])
+                    exp_month = int(date_part[2:4])
+                    exp_day = int(date_part[4:6])
+                    exp_date = datetime.date(exp_year, exp_month, exp_day)
+                    dte = max(1, (exp_date - today).days)
+            except Exception:
+                pass
+        elif exp_date_str:
             try:
                 if isinstance(exp_date_str, str):
                     exp_date = datetime.date.fromisoformat(exp_date_str.split("T")[0])
                 else:
                     exp_date = exp_date_str
-                dte = (exp_date - today).days
+                dte = max(1, (exp_date - today).days)
             except Exception:
                 dte = 30
 
         # 2. Get live underlying price & calculate live option mark
         underlying_px = live_prices.get(sym, float(p.get("underlying_price") or 0.0))
         if underlying_px <= 0:
-            underlying_px = float(p.get("underlying_price") or 100.0)
+            underlying_px = float(p.get("underlying_price") or (strike if strike > 0 else 100.0))
+
+        # Default strike if still unresolved
+        if strike <= 0:
+            strike = underlying_px
 
         T = max(1e-4, dte / 365.0)
         iv = float(p.get("implied_volatility") or 0.28)
@@ -92,10 +125,14 @@ def run_options_monitor_cycle(
                 sigma=iv,
                 option_type=opt_type
             )
-            live_opt_prem = greeks["price"]
+            live_opt_prem = max(0.05, float(greeks.get("price", entry_prem)))
         except Exception:
             live_opt_prem = entry_prem
-            greeks = {"delta": 0.70, "theta": -0.10}
+            greeks = {"delta": 0.70, "theta": -0.10, "gamma": 0.01, "vega": 0.15}
+
+        # Safety Guard: An option premium cannot exceed the underlying stock price for OTM/ATM calls
+        if live_opt_prem >= underlying_px and strike > 0:
+            live_opt_prem = max(0.05, entry_prem)
 
         # Snapshot real-time Greeks to options_greeks_history
         try:

@@ -96,19 +96,42 @@ def place_options_order(
 
     # 1. Execute live order via Alpaca MCP
     mcp_res = client.call_tool("alpaca_submit_options_order", order_args)
+    if not mcp_res.get("success"):
+        err_msg = mcp_res.get("error") or "Order submission rejected by Alpaca"
+        print(f"[OptionsExecutor] Order rejected by Alpaca: {err_msg}")
+        return {
+            "success": False,
+            "status": "REJECTED_BY_ALPACA",
+            "error": err_msg,
+            "occ_symbol": occ_symbol
+        }
+
     order_result = mcp_res.get("result", {})
+    if not order_result.get("success", True) and "error" in order_result:
+        err_msg = order_result.get("error")
+        print(f"[OptionsExecutor] Alpaca order error: {err_msg}")
+        return {
+            "success": False,
+            "status": "REJECTED_BY_ALPACA",
+            "error": err_msg,
+            "occ_symbol": occ_symbol
+        }
+
     order_id = order_result.get("order_id") or "MCP_PAPER_SIM"
-    order_status = order_result.get("status", "accepted")
+    order_status = str(order_result.get("status", "accepted")).lower()
+    db_status = "open" if order_status == "filled" else "pending_fill"
+    contract_spec["status"] = db_status
 
     # 2. Persist to PostgreSQL options_contracts table
     reasoning_payload = {
         "confidence": risk_gate_result.get("confidence", 85),
-        "reasoning": f"MCP Live Options Order: {strategy_type} on {occ_symbol}",
-        "order_id": order_id
+        "reasoning": f"MCP Live Options Order: {strategy_type} on {occ_symbol} (Alpaca Status: {order_status})",
+        "order_id": order_id,
+        "status": db_status
     }
     opt_contract_id = open_options_position(contract_spec, reasoning_payload)
 
-    # 3. Persist to master positions table
+    # 3. Persist to master positions table ONLY when verified accepted
     underlying_sym = contract_spec.get("underlying_symbol") or occ_symbol.split("2")[0]
     pos_rec = open_position(
         strategy_id=signal_dict.get("strategy_id", "options_mcp") if signal_dict else "options_mcp",
@@ -119,7 +142,7 @@ def place_options_order(
         entry_price=premium_paid,
         allocated_capital=total_cost,
         groq_confidence=risk_gate_result.get("confidence", 85),
-        groq_reasoning=f"Executed via Alpaca MCP Order ID: {order_id}",
+        groq_reasoning=f"Executed via Alpaca MCP Order ID: {order_id} (Alpaca Status: {order_status})",
         groq_go=True,
         risk_approved=True,
         asset_class="option",
@@ -134,10 +157,11 @@ def place_options_order(
         theta=contract_spec.get("theta_entry"),
         vega=contract_spec.get("vega_entry"),
         implied_volatility=contract_spec.get("iv_entry"),
-        underlying_price=contract_spec.get("underlying_price")
+        underlying_price=contract_spec.get("underlying_price"),
+        status=db_status
     )
 
-    print(f"[OptionsExecutor] [PLACED] Live MCP Order Placed: {occ_symbol} ({contracts_qty} contracts @ ${premium_paid:.2f}) | Order ID: {order_id} | Status: {order_status}")
+    print(f"[OptionsExecutor] [PLACED] Live MCP Order Placed & Verified: {occ_symbol} ({contracts_qty} contracts @ ${premium_paid:.2f}) | Order ID: {order_id} | Alpaca Status: {order_status}")
 
     return {
         "success": True,

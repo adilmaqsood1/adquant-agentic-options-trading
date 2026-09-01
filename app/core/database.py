@@ -149,7 +149,8 @@ def open_position(
     theta: Optional[float] = None,
     vega: Optional[float] = None,
     implied_volatility: Optional[float] = None,
-    underlying_price: Optional[float] = None
+    underlying_price: Optional[float] = None,
+    status: str = "open"
 ) -> Dict[str, Any]:
     """
     Inserts a new row into positions table (or memory fallback).
@@ -180,6 +181,7 @@ def open_position(
     exp_date_val = str(expiration_date) if expiration_date is not None else None
     groq_go_val = bool(groq_go) if groq_go is not None else None
     risk_app_val = bool(risk_approved) if risk_approved is not None else None
+    status_val = str(status or "open")
 
     # Try PostgreSQL first
     pool = get_pool()
@@ -200,7 +202,7 @@ def open_position(
                         ) VALUES (
                             %s, %s, %s, %s, %s,
                             %s, %s, %s, %s,
-                            'open', %s, %s, %s,
+                            %s, %s, %s, %s,
                             %s, %s,
                             %s, %s, %s, %s,
                             %s, %s, %s,
@@ -210,7 +212,7 @@ def open_position(
                     cur.execute(query, (
                         str(strategy_id), str(symbol).upper(), str(source).lower(), str(timeframe).upper(), str(signal_type).upper(),
                         entry_price_flt, entry_time, allocated_capital_flt, quantity,
-                        groq_conf_val, groq_reasoning, groq_go_val,
+                        status_val, groq_conf_val, groq_reasoning, groq_go_val,
                         risk_app_val, risk_block_reason,
                         str(asset_class), option_symbol, option_type, strike_price_val,
                         exp_date_val, contracts_val, contract_premium_val,
@@ -238,7 +240,7 @@ def open_position(
         "entry_time": entry_time,
         "allocated_capital": allocated_capital_flt,
         "quantity": quantity,
-        "status": "open",
+        "status": status_val,
         "groq_confidence": groq_conf_val,
         "groq_reasoning": groq_reasoning,
         "groq_go": groq_go_val,

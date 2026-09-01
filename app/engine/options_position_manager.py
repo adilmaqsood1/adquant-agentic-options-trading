@@ -30,6 +30,7 @@ def open_options_position(
         }
 
     try:
+        db_status = str(contract_spec.get("status") or (groq_decision or {}).get("status") or "pending_fill")
         pool = get_pool()
         if pool is not None:
             conn = pool.getconn()
@@ -50,9 +51,8 @@ def open_options_position(
                             %s, %s, %s, %s,
                             %s, %s, %s, %s,
                             %s, %s, %s, %s,
-                            %s, %s, %s, %s,
                             %s, %s, %s,
-                            %s, 'open', NOW(),
+                            %s, %s, NOW(),
                             %s, %s, %s
                         ) RETURNING id;
                     """
@@ -81,8 +81,9 @@ def open_options_position(
                         contract_spec.get("stop_loss_premium"),
                         contract_spec.get("time_stop_dte", 14),
                         contract_spec.get("breakeven_price"),
-                        groq_decision.get("confidence", 85),
-                        groq_decision.get("reasoning", ""),
+                        db_status,
+                        (groq_decision or {}).get("confidence", 85),
+                        (groq_decision or {}).get("reasoning", ""),
                         contract_spec.get("iv_regime", "low")
                     ))
                     row = cur.fetchone()
@@ -110,7 +111,7 @@ def open_options_position(
             "contracts_qty": int(contract_spec.get("contracts_qty") or 1),
             "total_cost": float(contract_spec.get("total_cost") or 500.0),
             "multiplier": 100,
-            "status": "open"
+            "status": db_status
         }
         insert_supabase_row("options_contracts", payload)
     except Exception:
@@ -204,8 +205,22 @@ def update_options_trail_stop(occ_symbol: str, trail_stop_floor_pct: float, trai
 
 def get_open_options_positions() -> List[Dict[str, Any]]:
     """
-    Returns all open options contracts as a list of dicts.
+    Returns all open options contracts directly from Alpaca Broker API,
+    falling back to database / memory ledger.
     """
+    try:
+        from app.core.database import get_open_positions
+        live_pos = get_open_positions()
+        options = [
+            p for p in live_pos 
+            if (p.get("asset_class") == "option" or bool(p.get("option_symbol"))) 
+            and not p.get("is_working_order")
+            and p.get("status") == "open"
+        ]
+        return options
+    except Exception as e:
+        print(f"[OptionsPositionManager] Live Alpaca positions sync notice: {e}")
+
     try:
         pool = get_pool()
         if pool is not None:
@@ -229,10 +244,20 @@ def get_open_options_positions() -> List[Dict[str, Any]]:
 
 def is_underlying_held(underlying_symbol: str) -> bool:
     """
-    Returns True if an open options contract already exists for this underlying symbol.
+    Returns True if an open options contract or pending order already exists for this underlying symbol on Alpaca.
     Prevents double options exposure.
     """
     clean_sym = underlying_symbol.upper().replace("/", "")
+    try:
+        from app.core.database import get_open_positions
+        live_pos = get_open_positions()
+        for p in live_pos:
+            p_sym = str(p.get("symbol") or p.get("underlying_symbol") or "").upper()
+            if p_sym == clean_sym:
+                return True
+    except Exception as e:
+        print(f"[OptionsPositionManager] Live Alpaca check notice: {e}")
+
     try:
         pool = get_pool()
         if pool is not None:

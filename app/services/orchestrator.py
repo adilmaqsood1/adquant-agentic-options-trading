@@ -292,11 +292,6 @@ def risk_node(state: AgentState) -> AgentState:
 
                                 if exec_res.get("success"):
                                     opt_data = contract_spec
-                                    open_options_position(
-                                        signal_dict={"symbol": sym, "strategy_id": s_id, "signal_type": sig_type},
-                                        contract_spec=contract_spec,
-                                        groq_decision=g_dec
-                                    )
                                     options_payload = {
                                         "strategy_id": s_id,
                                         "symbol": sym,
