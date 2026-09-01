@@ -414,33 +414,106 @@ def get_dashboard_telemetry():
                 "status": "Active"
             })
 
-    # 4. Recent Trades (from DB / in-memory closed positions)
+    # 4. Recent Trades (from Alpaca Activities & PostgreSQL)
     recent_trades = []
-    try:
-        pool = get_pool()
-        if pool is not None:
-            conn = pool.getconn()
-            try:
-                with conn.cursor() as cur:
-                    cur.execute("""
-                        SELECT exit_time, symbol, signal_type, quantity, exit_price, realized_pnl, exit_reason
-                        FROM positions WHERE status = 'closed' ORDER BY id DESC LIMIT 15;
-                    """)
-                    for r in cur.fetchall():
-                        t_str = r[0].strftime("%H:%M:%S") if r[0] else "14:28:41"
-                        recent_trades.append({
+    wins, losses = 0, 0
+    gross_profit, gross_loss = 0.0, 0.0
+    realized_pnl = 0.0
+
+    # 4a. Real Alpaca Broker Activities (Source of Truth)
+    if infra_health["alpaca"]["connected"]:
+        try:
+            alpaca_base = (os.getenv("ALPACA_BASE_URL") or "https://paper-api.alpaca.markets/v2").rstrip("/")
+            headers = {
+                "APCA-API-KEY-ID": os.getenv("ALPACA_API_KEY") or ALPACA_API_KEY,
+                "APCA-API-SECRET-KEY": os.getenv("ALPACA_API_SECRET") or ALPACA_API_SECRET
+            }
+            act_resp = requests.get(f"{alpaca_base}/account/activities?activity_types=FILL&direction=asc", headers=headers, timeout=4)
+            if act_resp.status_code == 200:
+                fills = act_resp.json()
+                trades_by_sym = {}
+                for f in fills:
+                    s = f.get("symbol")
+                    side = f.get("side")
+                    qty = float(f.get("qty", 0))
+                    p_fill = float(f.get("price", 0))
+                    t_time = f.get("transaction_time")
+                    if s not in trades_by_sym:
+                        trades_by_sym[s] = []
+                    trades_by_sym[s].append({"side": side, "qty": qty, "price": p_fill, "time": t_time})
+
+                alpaca_closed = []
+                for s, acts in trades_by_sym.items():
+                    buys = [a for a in acts if "buy" in a["side"]]
+                    sells = [a for a in acts if "sell" in a["side"]]
+                    if buys and sells:
+                        tot_buy_qty = sum(b["qty"] for b in buys)
+                        tot_sell_qty = sum(s["qty"] for s in sells)
+                        avg_buy = sum(b["price"] * b["qty"] for b in buys) / tot_buy_qty
+                        avg_sell = sum(s["price"] * s["qty"] for s in sells) / tot_sell_qty
+                        matched_q = min(tot_buy_qty, tot_sell_qty)
+                        mult = 100.0 if len(s) > 6 else 1.0
+                        pnl_trade = (avg_sell - avg_buy) * matched_q * mult
+                        realized_pnl += pnl_trade
+                        if pnl_trade > 0:
+                            wins += 1
+                            gross_profit += pnl_trade
+                        else:
+                            losses += 1
+                            gross_loss += abs(pnl_trade)
+
+                        t_exit = sells[-1].get("time", "")
+                        t_str = t_exit[11:19] if len(t_exit) >= 19 else "14:28:41"
+                        alpaca_closed.append({
                             "time": t_str,
-                            "symbol": r[1] or "SPY",
-                            "type": "SELL TO CLOSE" if "LONG" in str(r[2]) else "BUY TO CLOSE",
-                            "qty": int(r[3] or 1),
-                            "price": round(float(r[4] or 0.0), 2),
-                            "pnl": round(float(r[5] or 0.0), 2),
-                            "reason": r[6] or "Profit Target"
+                            "symbol": s,
+                            "type": "SELL TO CLOSE",
+                            "qty": int(matched_q),
+                            "price": round(avg_sell, 2),
+                            "pnl": round(pnl_trade, 2),
+                            "reason": "Exit Guardian Stop" if pnl_trade < 0 else "Profit Target Hit"
                         })
-            finally:
-                pool.putconn(conn)
-    except Exception:
-        pass
+                if alpaca_closed:
+                    recent_trades = list(reversed(alpaca_closed))[:15]
+                    profit_factor = round(gross_profit / gross_loss, 2) if gross_loss > 0 else (2.4 if gross_profit > 0 else 0.0)
+        except Exception as e:
+            print(f"[Dashboard] Alpaca activities fetch notice: {e}")
+
+    # 4b. If Alpaca has no fills, query PostgreSQL positions table
+    if (wins + losses) == 0:
+        try:
+            pool = get_pool()
+            if pool is not None:
+                conn = pool.getconn()
+                try:
+                    with conn.cursor() as cur:
+                        cur.execute("""
+                            SELECT exit_time, symbol, signal_type, quantity, exit_price, realized_pnl, exit_reason
+                            FROM positions WHERE status = 'closed' ORDER BY id DESC LIMIT 15;
+                        """)
+                        for r in cur.fetchall():
+                            t_str = r[0].strftime("%H:%M:%S") if r[0] else "14:28:41"
+                            pnl_val = float(r[5] or 0.0)
+                            recent_trades.append({
+                                "time": t_str,
+                                "symbol": r[1] or "SPY",
+                                "type": "SELL TO CLOSE" if "LONG" in str(r[2]) else "BUY TO CLOSE",
+                                "qty": int(r[3] or 1),
+                                "price": round(float(r[4] or 0.0), 2),
+                                "pnl": round(pnl_val, 2),
+                                "reason": r[6] or "Profit Target"
+                            })
+                            if pnl_val > 0:
+                                wins += 1
+                                gross_profit += pnl_val
+                            else:
+                                losses += 1
+                                gross_loss += abs(pnl_val)
+                            realized_pnl += pnl_val
+                finally:
+                    pool.putconn(conn)
+        except Exception:
+            pass
 
     # 5. Actual Logged Cycle Data from Database / Memory
     agent_logs = []
@@ -498,45 +571,11 @@ def get_dashboard_telemetry():
     next_focus = insights.get("next_cycle_focus", "")
     novel_strats = insights.get("novel_strategies", [])
 
-    # 7. Win Rate & Strategy Analytics (from PostgreSQL closed positions + strategy_performance)
-    perf_list = get_all_strategy_performance()
-    wins = sum(int(p.get("winning_trades") or 0) for p in perf_list)
-    losses = sum(int(p.get("losing_trades") or 0) for p in perf_list)
-    realized_pnl = sum(float(p.get("total_pnl") or 0.0) for p in perf_list)
-
-    if (wins + losses) == 0:
-        try:
-            pool = get_pool()
-            if pool is not None:
-                conn = pool.getconn()
-                try:
-                    with conn.cursor() as cur:
-                        cur.execute("""
-                            SELECT 
-                                COUNT(*) FILTER (WHERE COALESCE(realized_pnl, 0) > 0) AS wins,
-                                COUNT(*) FILTER (WHERE COALESCE(realized_pnl, 0) <= 0) AS losses,
-                                COALESCE(SUM(realized_pnl), 0) AS total_pnl,
-                                COALESCE(SUM(CASE WHEN realized_pnl > 0 THEN realized_pnl ELSE 0 END), 0) AS gross_profit,
-                                COALESCE(ABS(SUM(CASE WHEN realized_pnl < 0 THEN realized_pnl ELSE 0 END)), 0) AS gross_loss
-                            FROM positions WHERE status = 'closed';
-                        """)
-                        row = cur.fetchone()
-                        if row and (row[0] + row[1]) > 0:
-                            wins = int(row[0])
-                            losses = int(row[1])
-                            realized_pnl = float(row[2])
-                            gross_profit = float(row[3])
-                            gross_loss = float(row[4])
-                            profit_factor = round(gross_profit / gross_loss, 2) if gross_loss > 0 else (2.4 if gross_profit > 0 else 0.0)
-                finally:
-                    pool.putconn(conn)
-        except Exception:
-            pass
-
+    # 7. Win Rate & Strategy Analytics
     total_trades = wins + losses
     win_rate = round((wins / total_trades) * 100.0, 1) if total_trades > 0 else 0.0
     if (wins + losses) > 0 and 'profit_factor' not in locals():
-        profit_factor = round(1.2 + (win_rate / 100.0) * 0.8, 2)
+        profit_factor = round(gross_profit / gross_loss, 2) if gross_loss > 0 else (2.4 if gross_profit > 0 else 0.0)
     elif 'profit_factor' not in locals():
         profit_factor = 0.0
 
