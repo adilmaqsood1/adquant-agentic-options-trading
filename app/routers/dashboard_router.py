@@ -3456,34 +3456,58 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                 const color = COLORS[si % COLORS.length];
                 const trail = sym.trail || [];
 
-                for (let i = 1; i < trail.length; i++) {
-                    const alpha = 0.15 + (i / trail.length) * 0.65;
-                    ctx.globalAlpha = alpha;
-                    ctx.strokeStyle = color;
-                    ctx.lineWidth = 1.5;
-                    ctx.beginPath();
-                    ctx.moveTo(toX(trail[i-1].x), toY(trail[i-1].y));
-                    ctx.lineTo(toX(trail[i].x),   toY(trail[i-1].y));
-                    ctx.stroke();
-                    ctx.fillStyle = color;
-                    ctx.beginPath();
-                    ctx.arc(toX(trail[i-1].x), toY(trail[i-1].y), 2, 0, Math.PI * 2);
-                    ctx.fill();
+                if (trail.length >= 2) {
+                    // Draw smooth connected trailing curve
+                    for (let i = 1; i < trail.length; i++) {
+                        const p0 = trail[i - 1];
+                        const p1 = trail[i];
+                        const progress = i / (trail.length - 1);
+
+                        // Connected line segment
+                        ctx.beginPath();
+                        ctx.moveTo(toX(p0.x), toY(p0.y));
+                        ctx.lineTo(toX(p1.x), toY(p1.y));
+                        ctx.strokeStyle = color;
+                        ctx.lineWidth = 1.5 + (progress * 1.5);
+                        ctx.globalAlpha = 0.25 + (progress * 0.70);
+                        ctx.stroke();
+
+                        // Trailing breadcrumb dot
+                        ctx.beginPath();
+                        ctx.arc(toX(p0.x), toY(p0.y), 2.5 + (progress * 1.5), 0, Math.PI * 2);
+                        ctx.fillStyle = color;
+                        ctx.globalAlpha = 0.3 + (progress * 0.6);
+                        ctx.fill();
+                    }
                 }
                 ctx.globalAlpha = 1.0;
 
                 if (trail.length > 0) {
                     const last = trail[trail.length - 1];
                     const px = toX(last.x), py = toY(last.y);
-                    ctx.beginPath(); ctx.arc(px, py, 7, 0, Math.PI * 2);
-                    ctx.fillStyle = color; ctx.fill();
-                    ctx.strokeStyle = isDark ? '#0A0F0C' : '#fff';
-                    ctx.lineWidth = 2; ctx.stroke();
+                    
+                    // Outer glowing pulse ring
+                    ctx.beginPath();
+                    ctx.arc(px, py, 11, 0, Math.PI * 2);
+                    ctx.fillStyle = color;
+                    ctx.globalAlpha = 0.25;
+                    ctx.fill();
 
+                    // Main lead node
+                    ctx.globalAlpha = 1.0;
+                    ctx.beginPath();
+                    ctx.arc(px, py, 6.5, 0, Math.PI * 2);
+                    ctx.fillStyle = color;
+                    ctx.fill();
+                    ctx.strokeStyle = isDark ? '#0A0F0C' : '#fff';
+                    ctx.lineWidth = 2;
+                    ctx.stroke();
+
+                    // Clean Ticker label
                     ctx.fillStyle = isDark ? '#F5F7F5' : '#0A0F0C';
-                    ctx.font = 'bold 10px JetBrains Mono, monospace';
+                    ctx.font = 'bold 11px JetBrains Mono, monospace';
                     ctx.textAlign = 'left';
-                    ctx.fillText(sym.symbol, px + 10, py + 4);
+                    ctx.fillText(sym.symbol, px + 12, py + 4);
                 }
             });
         }
