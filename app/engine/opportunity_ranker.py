@@ -56,18 +56,24 @@ def detect_confluence_opportunities(fired_signals: List[Dict[str, Any]]) -> List
         base_confidence = int(primary_sig.get("groq_confidence", primary_sig.get("confidence", 80)))
 
         # 2. Confluence Classification & Scoring Bonus
+        is_rsi_oversold = any("rsi" in str(s).lower() for s in unique_strategies)
+        rsi_bonus = 15 if is_rsi_oversold else 0
+
         if confluence_count >= 3:
             confluence_tier = "TRIPLE_CONFLUENCE"
-            confluence_bonus = 25
+            confluence_bonus = 25 + rsi_bonus
             tier_label = f"Triple Strategy Confluence ({', '.join(unique_strategies)})"
         elif confluence_count == 2:
             confluence_tier = "DOUBLE_CONFLUENCE"
-            confluence_bonus = 15
+            confluence_bonus = 15 + rsi_bonus
             tier_label = f"Double Strategy Confluence ({', '.join(unique_strategies)})"
         else:
-            confluence_tier = "SINGLE_STRATEGY"
-            confluence_bonus = 0
-            tier_label = f"Single Strategy ({unique_strategies[0]})"
+            confluence_tier = "RSI_OVERSOLD_ALPHA" if is_rsi_oversold else "SINGLE_STRATEGY"
+            confluence_bonus = rsi_bonus
+            tier_label = f"RSI Oversold Alpha ({unique_strategies[0]})" if is_rsi_oversold else f"Single Strategy ({unique_strategies[0]})"
+
+        if is_rsi_oversold and confluence_count > 1:
+            tier_label += " [RSI Oversold Priority]"
 
         composite_conviction = min(99, base_confidence + confluence_bonus)
 
@@ -79,6 +85,7 @@ def detect_confluence_opportunities(fired_signals: List[Dict[str, Any]]) -> List
             "confluence_tier": confluence_tier,
             "confluence_label": tier_label,
             "confluence_bonus": confluence_bonus,
+            "is_rsi_oversold": is_rsi_oversold,
             "signal_type": signal_type,
             "last_close": last_close,
             "timeframe": timeframe,
@@ -88,8 +95,8 @@ def detect_confluence_opportunities(fired_signals: List[Dict[str, Any]]) -> List
             "primary_signal": primary_sig
         })
 
-    # Sort descending by composite conviction and confluence count
-    confluence_pool.sort(key=lambda x: (x["confluence_count"], x["composite_conviction"]), reverse=True)
+    # Sort descending by composite conviction, RSI priority, and confluence count
+    confluence_pool.sort(key=lambda x: (x.get("is_rsi_oversold", False), x["confluence_count"], x["composite_conviction"]), reverse=True)
     return confluence_pool
 
 
@@ -119,6 +126,7 @@ def rank_opportunities_tournament(
             "strategies": c["strategies_fired"],
             "confluence_count": c["confluence_count"],
             "confluence_tier": c["confluence_tier"],
+            "is_rsi_oversold": c.get("is_rsi_oversold", False),
             "current_price": c["last_close"],
             "composite_score": c["composite_conviction"],
             "signal_type": c["signal_type"],
@@ -129,10 +137,11 @@ def rank_opportunities_tournament(
         "You are the Lead Quantitative Portfolio Manager & Opportunity Tournament Agent for an institutional Options Desk.\n"
         "Your task is to analyze a batch of candidate option trade signals, compare them cross-sectionally, and rank them.\n\n"
         "EVALUATION CRITERIA:\n"
-        "1. MULTI-STRATEGY CONFLUENCE: Symbols with 2+ strategies firing simultaneously have the highest statistical win rates and MUST be prioritized.\n"
-        "2. ASYMMETRIC REWARD/RISK: Prioritize clear directional breakouts and high-liquidity leaders with optimal delta leverage.\n"
-        "3. SECTOR DIVERSIFICATION: Avoid selecting more than 2 stocks in the exact same sector (e.g. limit Mega-Cap Tech to 2 max).\n"
-        "4. REGIME COMPATIBILITY: Align long calls/spreads with current market regime.\n\n"
+        "1. RSI OVERSOLD ALPHA: High-quality RSI Oversold Reversal setups (holding macro support with positive RSI hook) provide exceptional asymmetric reward/risk for long calls and MUST be prioritized and executed whenever confidence >= 75%.\n"
+        "2. MULTI-STRATEGY CONFLUENCE: Symbols with 2+ strategies firing simultaneously have highest statistical win rates and must be executed.\n"
+        "3. POPULATE ALL AVAILABLE SLOTS: You MUST select exactly the top N candidates (up to available capacity) to ensure capital is actively deployed across multiple non-correlated setups.\n"
+        "4. SECTOR DIVERSIFICATION: Select across diversified industries (max 2 per industry/sector).\n"
+        "5. REGIME COMPATIBILITY: Align long calls/spreads with current market regime.\n\n"
         "OUTPUT FORMAT (STRICT JSON ONLY):\n"
         "{\n"
         '  "tournament_summary": "Executive summary explaining the macro context, confluence findings, and ranking logic.",\n'
@@ -142,7 +151,7 @@ def rank_opportunities_tournament(
         '      "symbol": "TICKER",\n'
         '      "confluence_tier": "TRIPLE_CONFLUENCE|DOUBLE_CONFLUENCE|SINGLE_STRATEGY",\n'
         '      "tournament_score": 95,\n'
-        '      "rationale": "Clear, concise 2-sentence institutional justification for why this is the #1 pick.",\n'
+        '      "rationale": "Clear, concise 2-sentence institutional justification for why this candidate was selected.",\n'
         '      "recommended_action": "BUY CALL (ITM) | BUY PUT (ITM) | SPREAD",\n'
         '      "suggested_size_pct": 100\n'
         "    }\n"
@@ -152,10 +161,10 @@ def rank_opportunities_tournament(
 
     user_prompt = (
         f"MARKET REGIME: {market_regime} (VIX: {market_vix})\n"
-        f"AVAILABLE POSITION CAPACITY: {available_capacity} open slots\n"
-        f"CANDIDATE OPPORTUNITIES ({len(candidates_payload)} total):\n"
+        f"TARGET EXECUTION CAPACITY: Select the Top {available_capacity} candidates for live order execution.\n"
+        f"CANDIDATE OPPORTUNITIES ({len(candidates_payload)} total unheld setups):\n"
         f"{json.dumps(candidates_payload, indent=2)}\n\n"
-        f"Perform the cross-sectional ranking tournament and select the top {available_capacity} candidates for live order execution."
+        f"Perform the cross-sectional ranking tournament and return the top {available_capacity} distinct candidates in 'top_ranked'."
     )
 
     ranked_candidates = []

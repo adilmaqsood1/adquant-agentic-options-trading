@@ -195,17 +195,21 @@ def risk_node(state: AgentState) -> AgentState:
     from app.engine.risk_gate_agent import compute_dynamic_options_capacity, evaluate_options_risk_gates
     from app.core.database import get_open_positions
 
-    current_open_pos = get_open_positions()
+    from app.engine.options_position_manager import is_underlying_held, get_open_options_positions
+    current_open_pos = get_open_options_positions()
     capacity_info = compute_dynamic_options_capacity(open_positions=current_open_pos)
     available_slots = max(0, capacity_info["max_simultaneous"] - len(current_open_pos))
 
-    confluence_pool = detect_confluence_opportunities(fired_signals)
-    print(f"[Confluence] Detected {len(confluence_pool)} unique symbol setups across {len(fired_signals)} strategy triggers.")
+    raw_confluence_pool = detect_confluence_opportunities(fired_signals)
+    # Pre-filter out any symbol that is ALREADY held in Alpaca or has a pending working order
+    confluence_pool = [c for c in raw_confluence_pool if not is_underlying_held(c["symbol"])]
+    print(f"[Confluence] Detected {len(raw_confluence_pool)} unique setups ({len(confluence_pool)} unheld & eligible) across {len(fired_signals)} triggers.")
 
     # 2. DeepSeek-V3.2 Opportunity Tournament Ranking
+    target_selection_count = min(len(confluence_pool), max(3, min(6, available_slots))) if available_slots > 0 else 1
     tournament = rank_opportunities_tournament(
         confluence_pool=confluence_pool,
-        available_capacity=max(1, available_slots) if available_slots > 0 else 1,
+        available_capacity=target_selection_count,
         market_regime=state.get("research_insights", {}).get("market_regime", {}).get("regime", "STRONG_BULL")
     )
 
