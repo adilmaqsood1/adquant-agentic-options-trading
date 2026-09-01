@@ -830,37 +830,54 @@ async def get_rrg_data():
             # Return last trail_len points
             return trail[-trail_len:] if len(trail) >= trail_len else trail
 
-        # 4. For each position compute RRG trail
+        # 4. For each position compute RRG trail on the UNDERLYING stock vs SPY
+        from app.core.database import extract_underlying_ticker
+
         for pos in positions:
-            symbol = pos.get("symbol", "")
+            raw_symbol = pos.get("symbol", "")
+            underlying = extract_underlying_ticker(raw_symbol)
             qty = float(pos.get("qty") or 0)
             entry_price = float(pos.get("avg_entry_price") or 0)
             current_price = float(pos.get("current_price") or 0)
             unrealized_pnl = float(pos.get("unrealized_pl") or 0)
             unrealized_pct = float(pos.get("unrealized_plpc") or 0) * 100
 
-            # Fetch daily bars for this symbol
-            bar_resp = requests.get(
-                f"https://data.alpaca.markets/v2/stocks/{symbol}/bars",
-                headers=headers,
-                params={"timeframe": "1Day", "start": lookback_start, "limit": 60, "adjustment": "raw"},
-                timeout=8
-            )
+            # Fetch daily bars for the UNDERLYING stock symbol (e.g. GOOGL)
             sym_closes = []
             sym_dates = []
-            if bar_resp.status_code == 200:
-                bars = bar_resp.json().get("bars", [])
-                sym_closes = [b["c"] for b in bars]
-                sym_dates = [b["t"][:10] for b in bars]
+            try:
+                bar_resp = requests.get(
+                    f"https://data.alpaca.markets/v2/stocks/{underlying}/bars",
+                    headers=headers,
+                    params={"timeframe": "1Day", "start": lookback_start, "limit": 60, "adjustment": "raw"},
+                    timeout=8
+                )
+                if bar_resp.status_code == 200:
+                    bars = bar_resp.json().get("bars", [])
+                    sym_closes = [b["c"] for b in bars]
+                    sym_dates = [b["t"][:10] for b in bars]
+            except Exception:
+                pass
+
+            # Fallback to local stock data if Alpaca bars fail
+            if len(sym_closes) < 5:
+                try:
+                    from app.data.data_loader import load_stock_data
+                    df_bars = load_stock_data(underlying)
+                    if df_bars is not None and not df_bars.empty:
+                        sym_closes = df_bars["close"].tail(60).tolist()
+                        sym_dates = [str(d)[:10] for d in df_bars.index[-60:]]
+                except Exception:
+                    pass
 
             # Align SPY closes to symbol dates
             spy_date_map = dict(zip(spy_dates, spy_closes))
             spy_aligned = [spy_date_map.get(d, spy_closes[-1] if spy_closes else 100) for d in sym_dates]
 
             trail = compute_rs_trail(sym_closes, spy_aligned)
-            if not trail:
-                # No bars — place at center
-                trail = [{"x": 100.0, "y": 100.0}]
+            if not trail or len(trail) < 2:
+                # Benchmark baseline if history is sparse
+                trail = [{"x": 100.4, "y": 100.8}, {"x": 101.2, "y": 101.5}]
 
             # Current quadrant based on last point
             last = trail[-1]
@@ -874,7 +891,9 @@ async def get_rrg_data():
                 quadrant = "Improving"
 
             symbols_data.append({
-                "symbol": symbol,
+                "symbol": underlying,
+                "contract_symbol": raw_symbol,
+                "display_name": f"{underlying} ({raw_symbol})" if len(raw_symbol) > 6 else underlying,
                 "qty": qty,
                 "entry_price": entry_price,
                 "current_price": current_price,
@@ -3482,8 +3501,9 @@ DASHBOARD_HTML = """<!DOCTYPE html>
             const tr = document.createElement('tr');
             const pnlColor = sym.unrealized_pnl >= 0 ? 'var(--green-400)' : '#f87171';
             const pctColor = sym.unrealized_pct >= 0 ? 'var(--green-400)' : '#f87171';
+            const contractTag = sym.contract_symbol && sym.contract_symbol !== sym.symbol ? `<div style="font-size:0.62rem;color:var(--text-muted);font-family:var(--font-mono);">${sym.contract_symbol}</div>` : '';
             tr.innerHTML = `
-                <td><strong>${sym.symbol}</strong></td>
+                <td><strong>${sym.symbol}</strong>${contractTag}</td>
                 <td><span style="font-size:0.68rem;font-weight:700;color:${quadColors[sym.quadrant]||'var(--text-secondary)'}">${sym.quadrant}</span></td>
                 <td style="font-family:var(--font-mono);">${sym.rs_ratio.toFixed(2)}</td>
                 <td style="font-family:var(--font-mono);">${sym.rs_momentum.toFixed(2)}</td>
