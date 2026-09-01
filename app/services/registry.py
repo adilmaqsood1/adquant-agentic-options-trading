@@ -716,24 +716,30 @@ def signal_rsi_oversold_reversal(df: pd.DataFrame, params: Dict[str, Any]) -> pd
     in_pos = False
     
     for i in range(1, len(df)):
-        # 1. Bullish RSI Hook: RSI must be actively curling UPWARD (positive slope) above 30 from oversold
-        rsi_curling_up = rsi_vals.iloc[i] > rsi_vals.iloc[i-1]
-        rsi_hook_above_30 = rsi_curling_up and (
-            (rsi_vals.iloc[i-1] <= rsi_threshold and rsi_vals.iloc[i] > rsi_threshold) or
-            (rsi_vals.iloc[i] > rsi_threshold and rsi_vals.iloc[i] <= 42.0)
-        )
-        
-        # 2. Trend Filter: Price must be near to (within 4%) or above the 200 SMA on daily candle
-        near_or_above_200_sma = df["close"].iloc[i] >= (sma200.iloc[i] * 0.96)
-        
-        # 3. Bullish price confirmation: green candle or close above 9 EMA
-        bullish_price = df["close"].iloc[i] >= df["close"].iloc[i-1] or df["close"].iloc[i] > ema9.iloc[i]
-        
-        if not in_pos and rsi_hook_above_30 and near_or_above_200_sma and bullish_price:
+        c_rsi = rsi_vals.iloc[i]
+        p_rsi = rsi_vals.iloc[i-1]
+        c_px = df["close"].iloc[i]
+        c_sma200 = sma200.iloc[i]
+        c_ema9 = ema9.iloc[i]
+
+        # 1. Oversold / Reversal condition:
+        # - Deep oversold trough (RSI <= 35) OR
+        # - Bullish hook emerging from oversold (RSI turning up between 28 and 45)
+        is_deep_oversold = (c_rsi <= 35.0)
+        is_reversal_hook = (c_rsi > p_rsi) and (28.0 <= c_rsi <= 45.0)
+        is_oversold_signal = is_deep_oversold or is_reversal_hook
+
+        # 2. Trend / Value filter: Price holding structural support (near/above 200 SMA or macro support)
+        near_or_above_support = (c_px >= c_sma200 * 0.90) if c_sma200 > 0 else True
+
+        # 3. Price stabilization: not in a complete freefall
+        price_stable = (c_px >= df["low"].iloc[i-1] * 0.98) or (c_px > c_ema9)
+
+        if not in_pos and is_oversold_signal and near_or_above_support and price_stable:
             signals.iloc[i] = 1
             in_pos = True
 
-        elif in_pos and (rsi_vals.iloc[i] >= rsi_exit or df["close"].iloc[i] < sma200.iloc[i] * 0.92):
+        elif in_pos and (c_rsi >= rsi_exit or (c_sma200 > 0 and c_px < c_sma200 * 0.88)):
             signals.iloc[i] = -1
             in_pos = False
             
