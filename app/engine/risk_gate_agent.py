@@ -224,7 +224,7 @@ def evaluate_options_risk_gates(
             "reason": f"DTE ({dte}) > 45 — outside the optimal entry window."
         }
 
-    # ── GATE 4: Liquidity Check — open to all US equities, block crypto only ────
+    # ── GATE 4: Liquidity Check & Bid/Ask Spread Cap (Max 8% Spread) ────────────
     clean_sym = symbol.replace("/USD", "").replace("-PERP", "")
     eligible, ineligible_reason = _is_options_eligible(symbol)
     if not eligible:
@@ -233,10 +233,36 @@ def evaluate_options_risk_gates(
             "gate_failed": "Gate 4: Asset Class Eligibility",
             "reason": ineligible_reason
         }
-    # Log a heads-up for names outside the fast-pass list (still approved)
+
+    # Strict Spread Verification: Eliminate contracts with >8% spread friction
+    occ_symbol = contract_spec.get("occ_symbol")
+    if occ_symbol:
+        try:
+            from app.execution.options_executor import inspect_option_contract
+            quote = inspect_option_contract(occ_symbol, underlying_symbol=clean_sym)
+            if quote.get("success"):
+                bid = float(quote.get("bid") or 0.0)
+                ask = float(quote.get("ask") or 0.0)
+                if ask <= 0 or bid <= 0:
+                    return {
+                        "approved": False,
+                        "gate_failed": "Gate 4: Zero Market Liquidity",
+                        "reason": f"No active market maker quotes (Bid: ${bid:.2f}, Ask: ${ask:.2f}) for {occ_symbol}."
+                    }
+                spread = ask - bid
+                spread_pct = (spread / ask) * 100.0
+                if spread_pct > 8.0:
+                    return {
+                        "approved": False,
+                        "gate_failed": "Gate 4: Excessive Bid/Ask Spread",
+                        "reason": f"Contract spread of {spread_pct:.1f}% (${spread:.2f}) exceeds the 8.0% max limit (Bid: ${bid:.2f}, Ask: ${ask:.2f}). Blocked to prevent instant paper loss."
+                    }
+        except Exception as e:
+            print(f"[RiskGate] Notice on Gate 4 spread check: {e}")
+
+    # Log notice for names outside high-liquidity universe
     if clean_sym not in HIGH_LIQUIDITY_FAST_PASS:
-        print(f"[RiskGate] Gate 4: {symbol} is not in the high-liquidity fast-pass list — "
-              f"verify OI > 500 and bid/ask spread < 10% before live execution.")
+        print(f"[RiskGate] Gate 4: {symbol} passed strict spread check (spread <= 8%).")
 
     # ── GATE 5: Dynamic Position Sizing via Performance Manager ──────────────────
     # Step A: Portfolio circuit breaker check

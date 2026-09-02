@@ -119,19 +119,34 @@ def run_options_monitor_cycle(
         if iv > 1.0:
             iv = iv / 100.0
 
+        # Primary: Fetch real-time live market quote (Midpoint) directly from Alpaca
         try:
-            greeks = BlackScholesEngine.calculate_greeks(
-                S=underlying_px,
-                K=strike,
-                T=T,
-                r=0.045,
-                sigma=iv,
-                option_type=opt_type
-            )
-            live_opt_prem = max(0.05, float(greeks.get("price", entry_prem)))
+            from app.execution.options_executor import inspect_option_contract
+            quote = inspect_option_contract(occ_symbol, underlying_symbol=sym)
+            if quote.get("success") and float(quote.get("mid") or 0.0) > 0:
+                live_opt_prem = float(quote.get("mid"))
+                greeks = {
+                    "delta": float(quote.get("delta") or 0.70),
+                    "theta": float(quote.get("theta") or -0.10),
+                    "gamma": float(quote.get("gamma") or 0.01),
+                    "vega": float(quote.get("vega") or 0.15)
+                }
+            else:
+                raise ValueError("Quote snapshot fallback to Black-Scholes")
         except Exception:
-            live_opt_prem = entry_prem
-            greeks = {"delta": 0.70, "theta": -0.10, "gamma": 0.01, "vega": 0.15}
+            try:
+                greeks = BlackScholesEngine.calculate_greeks(
+                    S=underlying_px,
+                    K=strike,
+                    T=T,
+                    r=0.045,
+                    sigma=iv,
+                    option_type=opt_type
+                )
+                live_opt_prem = max(0.05, float(greeks.get("price", entry_prem)))
+            except Exception:
+                live_opt_prem = entry_prem
+                greeks = {"delta": 0.70, "theta": -0.10, "gamma": 0.01, "vega": 0.15}
 
         # Safety Guard: An option premium cannot exceed the underlying stock price for OTM/ATM calls
         if live_opt_prem >= underlying_px and strike > 0:

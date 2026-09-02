@@ -125,13 +125,23 @@ def place_options_order(
     side = "sell" if is_short else "buy"
     pos_intent = "sell_to_open" if is_short else "buy_to_open"
 
-    # Pre-inspect live bid/ask quote to set a marketable limit price and prevent cancellations
+    # Pre-inspect live bid/ask quote to set a marketable limit price with buffer and prevent cancellations
     live_quote = inspect_option_contract(occ_symbol)
     if live_quote.get("success"):
-        marketable_price = live_quote.get("ask") if side == "buy" else live_quote.get("bid")
-        if marketable_price and marketable_price > 0:
-            premium_paid = round(float(marketable_price), 2)
-            total_cost = premium_paid * contracts_qty * 100
+        if side == "buy":
+            ask_px = float(live_quote.get("ask") or live_quote.get("premium") or premium_paid)
+            if ask_px > 0:
+                # Add marketable buffer (1% or min $0.05) to guarantee immediate fill against market makers
+                marketable_price = round(max(ask_px + 0.05, ask_px * 1.01), 2)
+                premium_paid = marketable_price
+                total_cost = round(premium_paid * contracts_qty * 100, 2)
+        else:
+            bid_px = float(live_quote.get("bid") or live_quote.get("premium") or premium_paid)
+            if bid_px > 0:
+                # Subtract marketable buffer for sell orders
+                marketable_price = max(0.05, round(min(bid_px - 0.05, bid_px * 0.99), 2))
+                premium_paid = marketable_price
+                total_cost = round(premium_paid * contracts_qty * 100, 2)
 
     order_args = {
         "symbol": occ_symbol,
