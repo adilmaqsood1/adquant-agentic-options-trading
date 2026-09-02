@@ -14,14 +14,25 @@ from app.services.registry import (
     signal_sharpe_residual_momentum,
     signal_cvd_divergence_squeeze,
     signal_rsi_oversold_reversal,
-    signal_trend_pullback_continuation
+    signal_trend_pullback_continuation,
+    signal_volatility_squeeze_breakout
 )
 from app.core.database import is_position_open
 
 
 STRATEGY_EXECUTION_CONFIG: Dict[str, Dict[str, Any]] = {
+    "volatility_squeeze_breakout": {
+        "handler": signal_volatility_squeeze_breakout,
+        "params": {
+            "bb_period": 20,
+            "bb_std": 2.0,
+            "kc_period": 20,
+            "kc_mult": 1.5
+        },
+        "allocated_capital": 25000.0,
+        "timeframe": "4H"
+    },
     "momentum_ema_rsi_adx": {
-
         "handler": signal_momentum_ema_rsi_adx,
         "params": {
             "fast_ema": 20,
@@ -126,14 +137,15 @@ def detect_signal(
     if raw_val == 1 and not in_position:
         signal_type = "ENTER_LONG"
         fired = True
+    elif raw_val == -1 and not in_position:
+        # Options allow two-way alpha: profit from downside moves via Bear Put Spreads / Puts
+        signal_type = "ENTER_SHORT"
+        fired = True
     elif raw_val == -1 and in_position:
         signal_type = "EXIT_LONG"
         fired = True
     elif raw_val == 1 and in_position:
         signal_type = "ALREADY_IN"
-        fired = False
-    elif raw_val == -1 and not in_position:
-        signal_type = "NO_POSITION"
         fired = False
     else:
         signal_type = "NONE"

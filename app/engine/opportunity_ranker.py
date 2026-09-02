@@ -56,23 +56,33 @@ def detect_confluence_opportunities(fired_signals: List[Dict[str, Any]]) -> List
         base_confidence = int(primary_sig.get("groq_confidence", primary_sig.get("confidence", 80)))
 
         # 2. Confluence Classification & Scoring Bonus
+        is_vol_squeeze = any("squeeze" in str(s).lower() for s in unique_strategies)
         is_rsi_oversold = any("rsi" in str(s).lower() for s in unique_strategies)
-        rsi_bonus = 15 if is_rsi_oversold else 0
+        
+        squeeze_bonus = 20 if is_vol_squeeze else 0
+        rsi_bonus = 10 if is_rsi_oversold else 0
+        alpha_bonus = squeeze_bonus + rsi_bonus
 
         if confluence_count >= 3:
             confluence_tier = "TRIPLE_CONFLUENCE"
-            confluence_bonus = 25 + rsi_bonus
+            confluence_bonus = 25 + alpha_bonus
             tier_label = f"Triple Strategy Confluence ({', '.join(unique_strategies)})"
         elif confluence_count == 2:
             confluence_tier = "DOUBLE_CONFLUENCE"
-            confluence_bonus = 15 + rsi_bonus
+            confluence_bonus = 15 + alpha_bonus
             tier_label = f"Double Strategy Confluence ({', '.join(unique_strategies)})"
+        elif is_vol_squeeze:
+            confluence_tier = "VOLATILITY_SQUEEZE_ALPHA"
+            confluence_bonus = squeeze_bonus + rsi_bonus
+            tier_label = f"Volatility Squeeze Alpha ({unique_strategies[0]})"
         else:
             confluence_tier = "RSI_OVERSOLD_ALPHA" if is_rsi_oversold else "SINGLE_STRATEGY"
-            confluence_bonus = rsi_bonus
+            confluence_bonus = alpha_bonus
             tier_label = f"RSI Oversold Alpha ({unique_strategies[0]})" if is_rsi_oversold else f"Single Strategy ({unique_strategies[0]})"
 
-        if is_rsi_oversold and confluence_count > 1:
+        if is_vol_squeeze:
+            tier_label += " [Vol Squeeze Breakout]"
+        elif is_rsi_oversold and confluence_count > 1:
             tier_label += " [RSI Oversold Priority]"
 
         composite_conviction = min(99, base_confidence + confluence_bonus)
@@ -85,6 +95,7 @@ def detect_confluence_opportunities(fired_signals: List[Dict[str, Any]]) -> List
             "confluence_tier": confluence_tier,
             "confluence_label": tier_label,
             "confluence_bonus": confluence_bonus,
+            "is_vol_squeeze": is_vol_squeeze,
             "is_rsi_oversold": is_rsi_oversold,
             "signal_type": signal_type,
             "last_close": last_close,
@@ -95,8 +106,8 @@ def detect_confluence_opportunities(fired_signals: List[Dict[str, Any]]) -> List
             "primary_signal": primary_sig
         })
 
-    # Sort descending by composite conviction, RSI priority, and confluence count
-    confluence_pool.sort(key=lambda x: (x.get("is_rsi_oversold", False), x["confluence_count"], x["composite_conviction"]), reverse=True)
+    # Sort descending by volatility squeeze priority, composite conviction, and confluence count
+    confluence_pool.sort(key=lambda x: (x.get("is_vol_squeeze", False), x.get("is_rsi_oversold", False), x["confluence_count"], x["composite_conviction"]), reverse=True)
     return confluence_pool
 
 

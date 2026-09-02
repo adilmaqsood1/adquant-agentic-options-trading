@@ -8,12 +8,31 @@ from data.adapter import get_data
 from data.kaggle_source import POSSIBLE_PATHS
 
 
-# High-Liquidity Primary Options Universe (Tight Bid/Ask Spreads, High Open Interest)
-OPTIONS_CORE_UNIVERSE: List[str] = [
-    "SPY", "QQQ", "IWM", "AAPL", "MSFT", "NVDA", "AMZN", "META", "GOOGL", "GOOG", "TSLA",
-    "AMD", "PLTR", "ARM", "NFLX", "AVGO", "COST", "ADBE", "CRM", "NOW", "SNOW", "PANW",
-    "CRWD", "MSTR", "COIN", "HON", "MU", "UBER", "SHOP", "NET", "DDOG", "ZS", "MRNA", "TEAM"
-]
+# High-Liquidity Primary Options Universe (~105 Elite liquid names with tight spreads & high OI)
+OPTIONS_CORE_UNIVERSE: List[str] = sorted(list(set([
+    # Major Market & Sector Index ETFs
+    "SPY", "QQQ", "IWM", "DIA", "SMH", "XBI", "XLF", "XLE", "XLK", "XLV", "XLI", "XLY", "XLP", "XLU", "GLD", "SLV", "TLT", "USO",
+    # Mega-Cap Tech & Communications
+    "AAPL", "MSFT", "NVDA", "AMZN", "META", "GOOGL", "GOOG", "TSLA", "NFLX", "ORCL", "ADBE", "CRM", "CSCO", "IBM", "TXN", "INTC",
+    # Semiconductors & AI Hardware
+    "AMD", "AVGO", "QCOM", "MU", "ARM", "TSM", "AMAT", "LRCX", "KLAC", "MRVL", "SMCI", "ON",
+    # Cloud, SaaS, Cybersecurity & Enterprise Growth
+    "PLTR", "PANW", "CRWD", "NOW", "SNOW", "DDOG", "NET", "ZS", "TEAM", "MDB", "SHOP", "UBER", "ABNB", "DASH", "WDAY", "FTNT", "SQ", "PYPL",
+    # Financials, Major Banks & Payments
+    "JPM", "BAC", "GS", "MS", "C", "WFC", "V", "MA", "AXP", "BLK", "SCHW", "HOOD",
+    # Crypto & FinTech Momentum Proxies
+    "COIN", "MSTR", "MARA", "RIOT", "CLSK",
+    # Consumer Discretionary, Retail & Auto
+    "COST", "WMT", "TGT", "HD", "LOW", "NKE", "SBUX", "MCD", "DIS", "F", "GM", "RIVN",
+    # Healthcare, Mega-Cap Pharma & Biotech
+    "LLY", "UNH", "JNJ", "ABBV", "PFE", "MRK", "AMGN", "GILD", "ISRG", "VRTX", "MRNA",
+    # Energy, Industrials, Defense & Materials
+    "XOM", "CVX", "SLB", "EOG", "OXY", "COP", "CAT", "DE", "BA", "GE", "LMT", "RTX", "HON", "FCX",
+    # High-Volume Momentum, Retail Favorites & Emerging Tech
+    "GME", "AMC", "SOFI", "AFRM", "UPST", "DKNG", "RBLX", "SNAP", "PINS", "CVNA", "APP", "ASTS",
+    "IONQ", "RKLB", "RDDT", "CART", "CAVA", "DUOL", "TOST", "HIMS", "CELH", "ELF", "SYM", "TEM",
+    "ALAB", "KVYO", "NVO", "BABA", "PDD", "BIDU", "NIO", "LI", "SE", "CPNG", "SPOT"
+])))
 
 # Nasdaq 100 Component Universe
 ALL_NASDAQ_SYMBOLS: List[str] = [
@@ -41,11 +60,18 @@ def get_all_sp500_symbols() -> List[str]:
 
 ALL_SP500_SYMBOLS: List[str] = get_all_sp500_symbols()
 
-# Combined Optionable US Equities (S&P 500 + Nasdaq union)
+# Combined Optionable US Equities Universe (S&P 500 + Nasdaq 100 + Core Growth & Momentum Union)
 ALL_US_EQUITIES: List[str] = sorted(list(set(ALL_SP500_SYMBOLS + ALL_NASDAQ_SYMBOLS + OPTIONS_CORE_UNIVERSE)))
 
 
 STRATEGY_MARKET_CONFIG: Dict[str, Dict[str, Any]] = {
+    # Institutional Volatility Squeeze & Compression Breakout (Core Options Engine)
+    "volatility_squeeze_breakout": {
+        "symbols": ALL_US_EQUITIES,
+        "source": "alpaca",
+        "timeframe": "4H",
+        "bars_needed": 300
+    },
     # 2H Fast Momentum: High-Beta Optionable Tech Equities & Indices
     "momentum_ema_rsi_adx": {
         "symbols": ALL_US_EQUITIES,

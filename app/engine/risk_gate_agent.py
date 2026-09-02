@@ -1,20 +1,15 @@
 import math
 from typing import Dict, Any, List, Optional
+from app.services.market_state import OPTIONS_CORE_UNIVERSE
+
+
 
 MAX_CONTRACTS_PER_TRADE = 30
-MIN_OPTION_TRADE_SIZE = 500.0   # minimum trade capital for options sizing
+MIN_OPTION_TRADE_SIZE = 500.0
 
-# Known high-liquidity names: fast-pass Gate 4 without any warning.
-# Any other US equity/ETF is still allowed — this list just skips the warning log.
-HIGH_LIQUIDITY_FAST_PASS = {
-    "AAPL", "NVDA", "TSLA", "MSFT", "AMZN", "META", "GOOGL", "GOOG",
-    "SPY",  "QQQ",  "IWM",  "GLD",  "TLT",
-    "TEAM", "ADBE", "NFLX", "AMD",  "MDB",  "ADSK", "CRM",
-    "NOW",  "SNOW", "PLTR", "ARM",  "UBER", "SHOP", "NET", "DDOG",
-    "PANW", "ZS",   "CRWD", "MSTR", "COIN",
-}
+from app.services.market_state import ALL_US_EQUITIES
+HIGH_LIQUIDITY_FAST_PASS = set(ALL_US_EQUITIES)
 
-# These asset classes CANNOT trade listed US options — always blocked.
 OPTIONS_INELIGIBLE_PATTERNS = ("/", "-PERP", "USDT", "/USD", "BTC", "ETH", "SOL")
 
 

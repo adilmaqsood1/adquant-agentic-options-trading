@@ -265,9 +265,9 @@ def risk_node(state: AgentState) -> AgentState:
                     "timestamp": r_dec.get("timestamp")
                 }
 
-                # Persist and route to Alpaca MCP
+                # Persist and route to Alpaca MCP (Two-Way Directional Options Trading)
                 try:
-                    if sig_type == "ENTER_LONG":
+                    if sig_type in ["ENTER_LONG", "ENTER_SHORT"]:
                         is_equity = "/" not in sym
                         opt_data = None
                         if is_equity and exec_price > 0:
@@ -317,14 +317,14 @@ def risk_node(state: AgentState) -> AgentState:
                                         "timestamp": r_dec.get("timestamp")
                                     }
                                     approved_orders.append(options_payload)
-                                    print(f"  [MCP EXECUTION SUCCESS] ✅ Rank #{item.get('rank', 1)}: {contract_spec['occ_symbol']} ({item.get('confluence_tier')}) live options order routed through Alpaca MCP.")
+                                    print(f"  [MCP EXECUTION SUCCESS] ✅ Rank #{item.get('rank', 1)}: {contract_spec['occ_symbol']} ({sig_type} | {contract_spec.get('strategy_type')}) routed through Alpaca MCP.")
                                 else:
                                     print(f"  [MCP ROUTE NOTICE] {sym} -> {exec_res.get('status')}: {exec_res.get('reason') or exec_res.get('error')}")
 
                             except Exception as opt_err:
                                 print(f"  [OPTIONS MCP PIPELINE ERROR] {opt_err}")
 
-                    elif sig_type == "EXIT_LONG":
+                    elif sig_type in ["EXIT_LONG", "EXIT_SHORT"]:
                         from app.execution.options_executor import close_options_order
                         close_res = close_options_order(
                             occ_symbol=sym,

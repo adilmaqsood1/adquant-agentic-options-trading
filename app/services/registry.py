@@ -509,6 +509,67 @@ def signal_buy_and_hold(df: pd.DataFrame, params: Dict[str, Any]) -> pd.Series:
     return signals
 
 
+def signal_volatility_squeeze_breakout(df: pd.DataFrame, params: Dict[str, Any]) -> pd.Series:
+    """
+    Options Volatility Squeeze & Compression Breakout (TTM Squeeze Mechanism):
+    1. Volatility Compression: Bollinger Bands (20, 2.0 std) narrow INSIDE Keltner Channels (20, 1.5 ATR).
+       This mathematically signals institutional volatility compression (coiled spring).
+    2. Squeeze Release / Breakout: Bollinger Bands expand OUTSIDE Keltner Channels.
+    3. Momentum Acceleration:
+       - Momentum > 0 & rising -> signals = 1 (Bullish Squeeze Breakout -> Long Call / Bull Call Spread)
+       - Momentum < 0 & falling -> signals = -1 (Bearish Squeeze Breakdown -> Long Put / Bear Put Spread)
+    Delivers rapid price velocity within 3-7 days, overcoming options Theta decay.
+    """
+    bb_period = int(params.get("bb_period", 20))
+    bb_std = float(params.get("bb_std", 2.0))
+    kc_period = int(params.get("kc_period", 20))
+    kc_mult = float(params.get("kc_mult", 1.5))
+    
+    # 1. Bollinger Bands
+    bb_upper, bb_mid, bb_lower = bollinger_bands(df["close"], period=bb_period, num_std=bb_std)
+    
+    # 2. Keltner Channels
+    kc_upper, kc_mid, kc_lower = keltner_channel(df["high"], df["low"], df["close"], period=kc_period, multiplier=kc_mult)
+    
+    # 3. Squeeze Detection: BB inside KC
+    squeeze_active = (bb_upper < kc_upper) & (bb_lower > kc_lower)
+    
+    # 4. Momentum Direction: MACD Histogram + RSI confirmation
+    _, _, macd_hist = macd(df["close"], fast=12, slow=26, signal=9)
+    rsi_val = rsi(df["close"], 14)
+    
+    signals = pd.Series(0, index=df.index)
+    in_pos = False
+    
+    for i in range(2, len(df)):
+        # Was squeeze active recently (in last 1 to 5 bars) and now fired (released)?
+        squeeze_fired_now = (not squeeze_active.iloc[i]) and (squeeze_active.iloc[i-1] or squeeze_active.iloc[i-2])
+        
+        # Bullish Breakout: Squeeze releases upward + positive accelerating momentum
+        bullish_breakout = squeeze_fired_now and (macd_hist.iloc[i] > 0) and (macd_hist.iloc[i] >= macd_hist.iloc[i-1]) and (rsi_val.iloc[i] >= 48.0)
+        
+        # Bearish Breakdown: Squeeze releases downward + negative accelerating momentum
+        bearish_breakdown = squeeze_fired_now and (macd_hist.iloc[i] < 0) and (macd_hist.iloc[i] <= macd_hist.iloc[i-1]) and (rsi_val.iloc[i] <= 52.0)
+        
+        if not in_pos:
+            if bullish_breakout:
+                signals.iloc[i] = 1 # Long Call / Bull Spread
+                in_pos = True
+            elif bearish_breakdown:
+                signals.iloc[i] = -1 # Long Put / Bear Spread
+                in_pos = True
+        else:
+            # Exit condition: Momentum deceleration or reversal
+            if (signals.iloc[i-1] == 1 or in_pos) and (macd_hist.iloc[i] < macd_hist.iloc[i-1] and macd_hist.iloc[i-1] < macd_hist.iloc[i-2]):
+                signals.iloc[i] = 0
+                in_pos = False
+            elif (signals.iloc[i-1] == -1 or in_pos) and (macd_hist.iloc[i] > macd_hist.iloc[i-1] and macd_hist.iloc[i-1] > macd_hist.iloc[i-2]):
+                signals.iloc[i] = 0
+                in_pos = False
+
+    return signals
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # NOVEL RESEARCH STRATEGIES (Institutional & Alpha Quant Models)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1230,6 +1291,22 @@ STRATEGY_DEFINITIONS = [
             {"key": "ema_slow", "label": "Slow EMA", "type": "number", "default": 50, "min": 30, "max": 100},
         ],
         "handler": signal_trend_pullback_continuation
+    },
+    {
+        "id": "volatility_squeeze_breakout",
+        "strategy": "Options Volatility Squeeze Breakout (TTM Institutional)",
+        "asset_class": "US Options Giants",
+        "default_symbol": "NVDA",
+        "type": "Volatility Compression & Gamma Expansion",
+        "description": "Exploits Bollinger Band coiling inside Keltner Channels to capture rapid directional price velocity within 3-7 days, overcoming options Theta decay.",
+        "universe_symbols": ["SPY", "QQQ", "AAPL", "NVDA", "TSLA", "MSFT", "AMZN", "META", "AMD", "COIN"],
+        "parameters": [
+            {"key": "bb_period", "label": "Bollinger Period", "type": "number", "default": 20, "min": 10, "max": 30},
+            {"key": "bb_std", "label": "Bollinger Std Dev", "type": "number", "default": 2.0, "min": 1.5, "max": 2.5},
+            {"key": "kc_period", "label": "Keltner Period", "type": "number", "default": 20, "min": 10, "max": 30},
+            {"key": "kc_mult", "label": "Keltner ATR Multiplier", "type": "number", "default": 1.5, "min": 1.0, "max": 2.5},
+        ],
+        "handler": signal_volatility_squeeze_breakout
     }
 ]
 
