@@ -51,33 +51,35 @@ def select_contract(
     is_bullish = any(w in signal_type for w in ["BUY", "LONG", "BULL"])
     is_bearish = any(w in signal_type for w in ["SELL", "SHORT", "BEAR"])
 
-    # 2. Strategy Selection Matrix
+    # 2. Strategy Selection Matrix (Defined-Risk Focus)
     if is_bullish:
         if iv_rank < 35.0:
             strategy_type = "long_call"
             contract_type = "call"
             target_delta = 0.68
-        elif iv_rank <= 55.0:
+        elif iv_rank <= 50.0:
             strategy_type = "bull_call_spread"
             contract_type = "call"
             target_delta = 0.65
         else:
-            strategy_type = "short_put"
-            contract_type = "put"
-            target_delta = -0.28
+            # High IV: Use Bull Call Debit Spread with defined maximum risk rather than naked short puts
+            strategy_type = "bull_call_spread"
+            contract_type = "call"
+            target_delta = 0.60
     elif is_bearish:
         if iv_rank < 35.0:
             strategy_type = "long_put"
             contract_type = "put"
             target_delta = -0.68
-        elif iv_rank <= 55.0:
+        elif iv_rank <= 50.0:
             strategy_type = "bear_put_spread"
             contract_type = "put"
             target_delta = -0.65
         else:
-            strategy_type = "bear_call_spread"
-            contract_type = "call"
-            target_delta = 0.30
+            # High IV: Use Bear Put Debit Spread with defined maximum risk
+            strategy_type = "bear_put_spread"
+            contract_type = "put"
+            target_delta = -0.60
     else:
         strategy_type = "long_call"
         contract_type = "call"

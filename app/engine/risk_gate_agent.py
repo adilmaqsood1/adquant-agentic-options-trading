@@ -194,20 +194,20 @@ def evaluate_options_risk_gates(
         }
 
     # ── GATE 1: Signal Quality ────────────────────────────────────────────────────
-    if confidence < 75:
+    if confidence < 82:
         return {
             "approved": False,
             "gate_failed": "Gate 1: Signal Quality",
-            "reason": f"Groq confidence ({confidence}%) is below the 75% options threshold."
+            "reason": f"Groq confidence ({confidence}%) is below the 82% options high-probability threshold."
         }
 
     # ── GATE 2: IV Regime Filter ──────────────────────────────────────────────────
     is_long_option = strategy_type in ["long_call", "long_put"]
-    if is_long_option and iv_rank > 55.0:
+    if is_long_option and iv_rank > 45.0:
         return {
             "approved": False,
             "gate_failed": "Gate 2: IV Regime",
-            "reason": f"IV Rank ({iv_rank:.1f}) > 55 — buying options is too expensive. Use short premium strategy instead."
+            "reason": f"IV Rank ({iv_rank:.1f}) > 45 — buying single options is too expensive in high IV regime. Use vertical spreads or short premium instead."
         }
 
     # ── GATE 3: DTE Window ────────────────────────────────────────────────────────
