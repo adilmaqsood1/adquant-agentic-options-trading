@@ -16,9 +16,49 @@ from app.core.database import get_open_positions, open_position, close_position
 
 def inspect_option_contract(occ_symbol: str, underlying_symbol: Optional[str] = None) -> Dict[str, Any]:
     """
-    Calls MCP tool to get current bid/ask, last price, Greeks, and open interest for an OCC symbol.
-    Used right before placing order to get live premium and ensure pricing freshness.
+    Fetches real-time live bid, ask, and Greeks for an OCC symbol directly from Alpaca
+    Market Data API (v1beta1 snapshots), falling back to MCP if necessary.
+    Ensures orders are placed with true market pricing to prevent unfulfilled/canceled limit orders.
     """
+    # 1. Primary: Direct Alpaca Options Market Data Snapshot
+    try:
+        import httpx
+        from dotenv import load_dotenv
+        load_dotenv(override=True)
+        alpaca_key = os.getenv("ALPACA_API_KEY")
+        alpaca_sec = os.getenv("ALPACA_API_SECRET")
+        if alpaca_key and alpaca_sec:
+            headers = {"APCA-API-KEY-ID": alpaca_key, "APCA-API-SECRET-KEY": alpaca_sec}
+            url = f"https://data.alpaca.markets/v1beta1/options/snapshots?symbols={occ_symbol}"
+            with httpx.Client(timeout=6.0) as client:
+                r = client.get(url, headers=headers)
+                if r.status_code == 200:
+                    snap_data = r.json().get("snapshots", {}).get(occ_symbol, {})
+                    quote = snap_data.get("latestQuote", {})
+                    greeks = snap_data.get("greeks", {})
+                    bp = float(quote.get("bp") or 0.0)
+                    ap = float(quote.get("ap") or 0.0)
+                    mid = round((bp + ap) / 2.0, 2) if bp > 0 and ap > 0 else (ap or bp or 5.0)
+
+                    if ap > 0 or bp > 0:
+                        return {
+                            "success": True,
+                            "occ_symbol": occ_symbol,
+                            "premium": ap if ap > 0 else mid,
+                            "bid": bp,
+                            "ask": ap,
+                            "mid": mid,
+                            "delta": greeks.get("delta"),
+                            "gamma": greeks.get("gamma"),
+                            "theta": greeks.get("theta"),
+                            "vega": greeks.get("vega"),
+                            "iv": snap_data.get("impliedVolatility"),
+                            "source": "alpaca_live_snapshot"
+                        }
+    except Exception as e:
+        print(f"[OptionsExecutor] Live quote snapshot notice for {occ_symbol}: {e}")
+
+    # 2. Fallback: MCP tool inspection
     client = get_mcp_client()
     clean_sym = underlying_symbol or occ_symbol.split("2")[0] if "2" in occ_symbol else occ_symbol
 
@@ -30,19 +70,21 @@ def inspect_option_contract(occ_symbol: str, underlying_symbol: Optional[str] = 
     if mcp_res.get("success"):
         res_data = mcp_res.get("result", {})
         spec = res_data.get("contract_spec", {})
+        prem = float(spec.get("premium_paid", 5.0))
         return {
             "success": True,
             "occ_symbol": occ_symbol,
             "underlying_price": res_data.get("underlying_price"),
-            "premium": spec.get("premium_paid", 5.0),
-            "bid": spec.get("bid", spec.get("premium_paid", 5.0) * 0.98),
-            "ask": spec.get("ask", spec.get("premium_paid", 5.0) * 1.02),
+            "premium": prem,
+            "bid": spec.get("bid", prem * 0.98),
+            "ask": spec.get("ask", prem * 1.02),
             "delta": spec.get("delta_entry"),
             "gamma": spec.get("gamma_entry"),
             "theta": spec.get("theta_entry"),
             "vega": spec.get("vega_entry"),
             "iv": spec.get("iv_entry"),
-            "contract_spec": spec
+            "contract_spec": spec,
+            "source": "mcp_fallback"
         }
 
     return {
