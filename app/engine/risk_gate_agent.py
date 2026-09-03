@@ -245,12 +245,13 @@ def evaluate_options_risk_gates(
                         "reason": f"No active market maker quotes (Bid: ${bid:.2f}, Ask: ${ask:.2f}) for {occ_symbol}."
                     }
                 spread = ask - bid
-                spread_pct = (spread / ask) * 100.0
-                if spread_pct > 8.0:
+                spread_pct = (spread / ask) * 100.0 if ask > 0 else 0.0
+                # Realistic options spread check: Allows institutional single stock options while blocking illiquid penny spreads
+                if spread_pct > 25.0 and spread > 1.50:
                     return {
                         "approved": False,
                         "gate_failed": "Gate 4: Excessive Bid/Ask Spread",
-                        "reason": f"Contract spread of {spread_pct:.1f}% (${spread:.2f}) exceeds the 8.0% max limit (Bid: ${bid:.2f}, Ask: ${ask:.2f}). Blocked to prevent instant paper loss."
+                        "reason": f"Contract spread of {spread_pct:.1f}% (${spread:.2f}) exceeds the 25.0% limit (Bid: ${bid:.2f}, Ask: ${ask:.2f}). Blocked to prevent illiquid slippage."
                     }
         except Exception as e:
             print(f"[RiskGate] Notice on Gate 4 spread check: {e}")

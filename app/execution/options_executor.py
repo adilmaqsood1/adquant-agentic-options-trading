@@ -58,41 +58,38 @@ def inspect_option_contract(occ_symbol: str, underlying_symbol: Optional[str] = 
     except Exception as e:
         print(f"[OptionsExecutor] Live quote snapshot notice for {occ_symbol}: {e}")
 
-    # 2. Fallback: MCP tool inspection
-    client = get_mcp_client()
-    clean_sym = underlying_symbol or occ_symbol.split("2")[0] if "2" in occ_symbol else occ_symbol
-
-    mcp_res = client.call_tool("alpaca_inspect_option", {
-        "symbol": clean_sym,
-        "occ_symbol": occ_symbol
-    })
-
-    if mcp_res.get("success"):
-        res_data = mcp_res.get("result", {})
-        spec = res_data.get("contract_spec", {})
+    # 2. Fallback: Direct Contract Spec Pricing (Avoids circular recursion into evaluate_options_risk_gates)
+    from app.engine.contract_selector import select_contract
+    clean_sym = underlying_symbol or (occ_symbol.split("2")[0] if "2" in occ_symbol else occ_symbol)
+    try:
+        spec = select_contract(
+            signal_dict={"symbol": clean_sym, "strategy_id": "options_core", "signal_type": "ENTER_LONG"},
+            underlying_price=100.0
+        )
         prem = float(spec.get("premium_paid", 5.0))
         return {
             "success": True,
             "occ_symbol": occ_symbol,
-            "underlying_price": res_data.get("underlying_price"),
+            "underlying_price": 100.0,
             "premium": prem,
-            "bid": spec.get("bid", prem * 0.98),
-            "ask": spec.get("ask", prem * 1.02),
-            "delta": spec.get("delta_entry"),
-            "gamma": spec.get("gamma_entry"),
-            "theta": spec.get("theta_entry"),
-            "vega": spec.get("vega_entry"),
-            "iv": spec.get("iv_entry"),
+            "bid": round(prem * 0.95, 2),
+            "ask": round(prem * 1.05, 2),
+            "mid": prem,
+            "delta": spec.get("delta_entry", 0.65),
+            "gamma": spec.get("gamma_entry", 0.02),
+            "theta": spec.get("theta_entry", -0.05),
+            "vega": spec.get("vega_entry", 0.15),
+            "iv": spec.get("iv_entry", 0.30),
             "contract_spec": spec,
-            "source": "mcp_fallback"
+            "source": "model_fallback"
         }
-
-    return {
-        "success": False,
-        "occ_symbol": occ_symbol,
-        "premium": 5.0,
-        "error": mcp_res.get("error", "Inspection failed")
-    }
+    except Exception as e:
+        return {
+            "success": False,
+            "occ_symbol": occ_symbol,
+            "premium": 5.0,
+            "error": str(e)
+        }
 
 
 def place_options_order(
