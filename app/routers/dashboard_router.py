@@ -4224,7 +4224,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                 const eq = data.equity;
                 document.getElementById('kpi-equity').textContent = '$' + Number(eq.total_value).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
                 const chgEl = document.getElementById('kpi-equity-change');
-                chgEl.textContent = (eq.today_change_usd >= 0 ? '+ +$' : '- -$') + Math.abs(eq.today_change_usd).toFixed(2) + ' (' + eq.today_change_pct + '%) Today';
+                chgEl.textContent = (eq.today_change_usd >= 0 ? '+$' : '-$') + Math.abs(eq.today_change_usd).toFixed(2) + ' (' + eq.today_change_pct + '%) Today';
                 chgEl.className = eq.today_change_usd >= 0 ? 'text-green' : 'text-rose';
                 document.getElementById('kpi-buying-power').textContent = 'Buying Power $' + Number(eq.buying_power).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
                 
@@ -4251,13 +4251,37 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                 const pnlEl = document.getElementById('kpi-pnl');
                 pnlEl.textContent = (perf.options_alpha_pnl >= 0 ? '+$' : '-$') + Math.abs(perf.options_alpha_pnl).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
                 pnlEl.className = 'kpi-value ' + (perf.options_alpha_pnl >= 0 ? 'text-green' : 'text-rose');
-                document.getElementById('kpi-alpha-pct').textContent = '+ ' + perf.alpha_pct + '% Alpha';
-                document.getElementById('kpi-sharpe').textContent = '| Sharpe ' + perf.sharpe_ratio;
+                document.getElementById('kpi-alpha-pct').textContent = (perf.alpha_pct >= 0 ? '+' : '') + perf.alpha_pct + '% Alpha';
+                document.getElementById('kpi-sharpe').textContent = '| Sharpe ' + (perf.sharpe_ratio > 0 ? perf.sharpe_ratio : '--');
                 document.getElementById('kpi-mtd').textContent = 'MTD ' + (perf.mtd_pnl >= 0 ? '+$' : '-$') + Math.abs(perf.mtd_pnl).toLocaleString('en-US', {minimumFractionDigits: 2});
                 
-                document.getElementById('kpi-winrate').textContent = perf.win_rate_pct + '%';
-                document.getElementById('kpi-winloss-sub').textContent = 'Wins ' + perf.wins + ' | Losses ' + perf.losses;
-                document.getElementById('kpi-pf').textContent = 'PF ' + perf.profit_factor;
+                const winRateEl = document.getElementById('kpi-winrate');
+                const winLossSubEl = document.getElementById('kpi-winloss-sub');
+                const pfEl = document.getElementById('kpi-pf');
+                const totalTrades = (perf.wins || 0) + (perf.losses || 0);
+
+                if (totalTrades > 0) {
+                    winRateEl.textContent = perf.win_rate_pct + '%';
+                    winRateEl.className = 'kpi-value ' + (perf.win_rate_pct >= 50 ? 'text-green' : 'text-gold');
+                    winLossSubEl.textContent = 'Wins ' + perf.wins + ' | Losses ' + perf.losses;
+                    pfEl.textContent = 'PF ' + perf.profit_factor;
+                    if (winRateChart && winRateChart.data) {
+                        winRateChart.data.datasets[0].data = [perf.win_rate_pct, Math.max(0, 100 - perf.win_rate_pct)];
+                        winRateChart.data.datasets[0].backgroundColor = [perf.win_rate_pct >= 50 ? '#39D353' : '#f59e0b', '#1a271f'];
+                        winRateChart.update();
+                    }
+                } else {
+                    const activeCount = data.positions ? data.positions.length : 0;
+                    winRateEl.textContent = '--';
+                    winRateEl.className = 'kpi-value text-muted';
+                    winLossSubEl.textContent = '0 Closed | ' + activeCount + ' Active in Market';
+                    pfEl.textContent = 'PF -- (Awaiting Exits)';
+                    if (winRateChart && winRateChart.data) {
+                        winRateChart.data.datasets[0].data = [100, 0];
+                        winRateChart.data.datasets[0].backgroundColor = ['#f59e0b', '#1a271f'];
+                        winRateChart.update();
+                    }
+                }
                 
                 document.getElementById('kpi-drawdown').textContent = (perf.max_drawdown_pct < 0 ? '' : '-') + Math.abs(perf.max_drawdown_pct) + '%';
                 document.getElementById('kpi-peak-sub').textContent = 'From peak -$' + Math.abs(perf.from_peak_usd).toLocaleString('en-US');
