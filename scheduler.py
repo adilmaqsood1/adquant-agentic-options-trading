@@ -49,10 +49,23 @@ def job_daily_cycle():
 
 
 
+def job_options_monitor():
+    """Autonomous Options Monitor Agent: Enforces 4-exit discipline across all open positions."""
+    try:
+        from app.engine.options_monitor_agent import run_options_monitor_cycle
+        mon_res = run_options_monitor_cycle()
+        if mon_res.get("exits_triggered", 0) > 0:
+            print(f"[SCHEDULER MONITOR] Closed {mon_res['exits_triggered']} positions via automated AI Exit Guardian.")
+        return mon_res
+    except Exception as e:
+        print(f"[SCHEDULER MONITOR ERROR] {e}")
+        return None
+
+
 def run_full_initial_scan() -> Dict[str, Any]:
     """
     Runs an immediate comprehensive scan across ALL time intervals (2H, 4H, 1D)
-    and all 4 production strategies on engine boot to identify any active opportunities immediately.
+    and all production strategies on engine boot to identify any active opportunities immediately.
     """
     print("\n" + "=" * 80)
     print("      INITIAL ENGINE BOOT: SCANNING ALL TIME INTERVALS (2H, 4H, 1D)")
@@ -60,18 +73,23 @@ def run_full_initial_scan() -> Dict[str, Any]:
     
     results = {}
     
+    # 0. Run Initial Options Monitor Scan
+    print("\n>>> [INITIAL SCAN 0/3] Running Autonomous Options Monitor Scan...")
+    res_mon = job_options_monitor()
+    results["monitor"] = res_mon
+
     # 1. Scan 2H Timeframe
-    print("\n>>> [INITIAL SCAN 1/3] Scanning 2H Timeframe (BTCUSDT)...")
+    print("\n>>> [INITIAL SCAN 1/3] Scanning 2H Timeframe...")
     res_2h = job_2h_cycle()
     results["2H"] = res_2h
     
     # 2. Scan 4H Timeframe
-    print("\n>>> [INITIAL SCAN 2/3] Scanning 4H Timeframe (BTCUSDT)...")
+    print("\n>>> [INITIAL SCAN 2/3] Scanning 4H Timeframe...")
     res_4h = job_4h_cycle()
     results["4H"] = res_4h
     
     # 3. Scan 1D Timeframe
-    print("\n>>> [INITIAL SCAN 3/3] Scanning 1D Daily Timeframe (SPY, QQQ, AAPL, NVDA)...")
+    print("\n>>> [INITIAL SCAN 3/3] Scanning 1D Daily Timeframe...")
     res_1d = job_daily_cycle()
     results["1D"] = res_1d
     
@@ -84,7 +102,7 @@ def run_full_initial_scan() -> Dict[str, Any]:
 
 def start_scheduler(run_immediately: bool = True) -> BackgroundScheduler:
     """
-    Initializes and starts the autonomous background scheduler with all 3 recurring jobs.
+    Initializes and starts the autonomous background scheduler with all recurring jobs.
     If run_immediately=True, immediately triggers the initial scan across all intervals in a background thread.
     """
     global _global_scheduler
@@ -100,6 +118,16 @@ def start_scheduler(run_immediately: bool = True) -> BackgroundScheduler:
 
 
     scheduler = BackgroundScheduler(timezone="UTC")
+
+    # 0. Job 0 — Continuous AI Options Monitor Agent (Every 2 minutes)
+    scheduler.add_job(
+        job_options_monitor,
+        trigger=IntervalTrigger(minutes=2),
+        id="job_options_monitor_agent",
+        name="2-Min AI Options Exit Guardian",
+        misfire_grace_time=60,
+        replace_existing=True
+    )
 
     # 1. Job 1 — Every 2 Hours (recurring)
     scheduler.add_job(

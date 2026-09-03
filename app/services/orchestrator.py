@@ -200,8 +200,7 @@ def risk_node(state: AgentState) -> AgentState:
     cancel_stale_working_orders(max_age_minutes=15)
 
     current_open_pos = get_open_options_positions()
-    capacity_info = compute_dynamic_options_capacity(open_positions=current_open_pos)
-    available_slots = max(0, capacity_info["max_simultaneous"] - len(current_open_pos))
+    capacity_info = compute_dynamic_options_capacity(open_positions=current_open_pos, options_budget_pct=0.85)
 
     raw_confluence_pool = detect_confluence_opportunities(fired_signals)
     # Pre-filter out any symbol that is ALREADY held in Alpaca or has a pending working order
@@ -209,7 +208,13 @@ def risk_node(state: AgentState) -> AgentState:
     print(f"[Confluence] Detected {len(raw_confluence_pool)} unique setups ({len(confluence_pool)} unheld & eligible) across {len(fired_signals)} triggers.")
 
     # 2. DeepSeek-V3.2 Opportunity Tournament Ranking
-    target_selection_count = min(len(confluence_pool), max(3, min(6, available_slots))) if available_slots > 0 else 1
+    # Dynamically select highest-conviction candidates based on remaining 85% options capital budget
+    if capacity_info.get("budget_exhausted"):
+        target_selection_count = 0
+    else:
+        rem_budget = float(capacity_info.get("remaining_budget", 5000.0))
+        target_selection_count = min(len(confluence_pool), max(3, min(8, int(rem_budget / 1500.0))))
+
     tournament = rank_opportunities_tournament(
         confluence_pool=confluence_pool,
         available_capacity=target_selection_count,
@@ -582,9 +587,10 @@ def run_cycle(
     """
     if strategy_ids is None:
         if timeframe_scope == "2H":
-            strategy_ids = ["momentum_ema_rsi_adx"]
+            strategy_ids = ["volatility_squeeze_breakout", "momentum_ema_rsi_adx"]
         elif timeframe_scope == "4H":
             strategy_ids = [
+                "volatility_squeeze_breakout",
                 "liquidity_sweep_absorption",
                 "rsi_oversold_reversal",
                 "cvd_divergence_squeeze",
@@ -593,6 +599,7 @@ def run_cycle(
             ]
         elif timeframe_scope == "1D":
             strategy_ids = [
+                "volatility_squeeze_breakout",
                 "rsi_oversold_reversal",
                 "trend_pullback_continuation",
                 "lead_lag_propagation",
@@ -600,6 +607,7 @@ def run_cycle(
             ]
         else:
             strategy_ids = [
+                "volatility_squeeze_breakout",
                 "liquidity_sweep_absorption",
                 "rsi_oversold_reversal",
                 "cvd_divergence_squeeze",

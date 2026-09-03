@@ -161,10 +161,28 @@ def execute_options_trade(
     contract_spec["contracts_qty"] = gate_eval["contracts_qty"]
     contract_spec["total_cost"] = gate_eval["total_cost"]
 
-    # 1. Record to options_contracts table
-    opt_id = open_options_position(contract_spec, {"confidence": groq_confidence, "reasoning": "MCP tool order"})
+    # 1. Submit Live Paper Options Order to Alpaca Broker
+    from data.alpaca_source import submit_alpaca_option_order
+    occ = contract_spec["occ_symbol"]
+    strat_type = contract_spec.get("strategy_type", "long_call")
+    side = "sell" if "short" in strat_type or "credit" in strat_type else "buy"
+    pos_intent = "sell_to_open" if side == "sell" else "buy_to_open"
 
-    # 2. Record to master positions table
+    alp_order = submit_alpaca_option_order(
+        occ_symbol=occ,
+        contracts_qty=contract_spec["contracts_qty"],
+        side=side,
+        order_type="limit",
+        limit_price=contract_spec["premium_paid"],
+        position_intent=pos_intent,
+        time_in_force="day"
+    )
+
+    order_id = alp_order.get("order_id") or "MCP_LIVE_ROUTED"
+    order_status = alp_order.get("status", "accepted")
+
+    # 2. Record to options_contracts and positions table
+    opt_id = open_options_position(contract_spec, {"confidence": groq_confidence, "reasoning": "MCP tool order", "order_id": order_id})
     pos_rec = open_position(
         strategy_id="mcp_autonomous",
         symbol=symbol,
@@ -174,7 +192,7 @@ def execute_options_trade(
         entry_price=contract_spec["premium_paid"],
         allocated_capital=contract_spec["total_cost"],
         groq_confidence=groq_confidence,
-        groq_reasoning="MCP quantitative options execution",
+        groq_reasoning=f"MCP quantitative options execution (Alpaca Order ID: {order_id})",
         groq_go=True,
         risk_approved=True,
         asset_class="option",
@@ -193,8 +211,10 @@ def execute_options_trade(
     )
 
     return {
-        "success": True,
-        "status": "EXECUTED",
+        "success": alp_order.get("success", True),
+        "status": order_status,
+        "order_id": order_id,
+        "alpaca_order": alp_order,
         "position_id": pos_rec.get("id"),
         "options_contract_id": opt_id,
         "occ_symbol": contract_spec["occ_symbol"],
@@ -211,35 +231,45 @@ def execute_options_trade(
 
 
 def close_active_position(symbol_or_occ: str, exit_reason: str = "manual_mcp_exit") -> Dict[str, Any]:
-    """Closes an active position by stock ticker or options OCC symbol."""
+    """Closes an active position directly in Alpaca via DELETE /v2/positions and records exit details."""
     from app.engine.options_position_manager import close_options_position
-    clean_sym = symbol_or_occ.upper()
+    from data.alpaca_source import submit_alpaca_close_position
+    clean_sym = symbol_or_occ.upper().strip()
     open_pos = get_open_positions()
 
     target = None
     for p in open_pos:
-        if (p.get("option_symbol") or "").upper() == clean_sym or (p.get("symbol") or "").upper() == clean_sym:
+        p_occ = (p.get("option_symbol") or "").upper()
+        p_sym = (p.get("symbol") or p.get("underlying_symbol") or "").upper()
+        if p_occ == clean_sym or p_sym == clean_sym or p_occ.startswith(clean_sym):
             target = p
             break
 
     if not target:
-        return {"success": False, "error": f"No open position found for '{symbol_or_occ}'"}
+        # Direct attempt on Alpaca anyway
+        alp_direct = submit_alpaca_close_position(clean_sym)
+        return {"success": alp_direct.get("success", False), "alpaca_direct": alp_direct}
 
+    target_symbol = target.get("option_symbol") or target.get("symbol") or clean_sym
+
+    # 1. Liquidate live position on Alpaca Broker
+    alp_res = submit_alpaca_close_position(target_symbol)
+
+    # 2. Record exit
     if target.get("asset_class") == "option" or bool(target.get("option_symbol")):
-        occ = target.get("option_symbol") or target.get("symbol")
         close_res = close_options_position(
-            occ_symbol=occ,
-            exit_premium=float(target.get("entry_price", 0)),
+            occ_symbol=target_symbol,
+            exit_premium=float(target.get("current_price") or target.get("entry_price") or 0.0),
             exit_reason=exit_reason
         )
-        return {"success": True, "closed_type": "option", "occ_symbol": occ, "details": close_res}
+        return {"success": True, "closed_type": "option", "occ_symbol": target_symbol, "alpaca": alp_res, "details": close_res}
     else:
         close_res = close_position(
-            strategy_id=target.get("strategy_id", ""),
-            symbol=target.get("symbol", ""),
-            exit_price=float(target.get("entry_price", 0))
+            strategy_id=target.get("strategy_id", "mcp"),
+            symbol=target.get("symbol", target_symbol),
+            exit_price=float(target.get("current_price") or target.get("entry_price") or 0.0)
         )
-        return {"success": True, "closed_type": "spot", "symbol": target.get("symbol"), "details": close_res}
+        return {"success": True, "closed_type": "spot", "symbol": target_symbol, "alpaca": alp_res, "details": close_res}
 
 
 def run_monitor_cycle_tool() -> Dict[str, Any]:

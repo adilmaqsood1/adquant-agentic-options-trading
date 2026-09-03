@@ -21,7 +21,8 @@ def select_contract(
     signal_dict: Dict[str, Any],
     underlying_price: float,
     hv_data: Optional[Dict[str, Any]] = None,
-    groq_confidence: int = 80
+    groq_confidence: int = 80,
+    **kwargs
 ) -> Dict[str, Any]:
     """
     Contract Selection Agent (Pure Math & Black-Scholes):
@@ -232,6 +233,11 @@ def select_contract(
     time_stop_dte = 14 # 14 DTE hard cut-off
     occ_symbol = generate_occ_symbol(symbol=symbol, expiry_date=expiry_date, strike=strike_price, contract_type=contract_type)
 
+    allocated_cap = float(kwargs.get("allocated_capital") or signal_dict.get("allocated_capital") or 2500.0)
+    cost_per_c = float(effective_premium) * 100.0
+    contracts_qty = max(1, int(math.floor(allocated_cap / cost_per_c))) if cost_per_c > 0 else 1
+    total_cost = round(contracts_qty * cost_per_c, 2)
+
     return {
         "signal_id": str(signal_id),
         "strategy_id": str(strategy_id),
@@ -246,6 +252,8 @@ def select_contract(
         "underlying_price": float(underlying_price),
         "premium_paid": float(effective_premium),
         "raw_premium": float(premium_paid),
+        "contracts_qty": contracts_qty,
+        "total_cost": total_cost,
         "multiplier": 100,
         "delta_entry": float(greeks["delta"]),
         "gamma_entry": float(greeks["gamma"]),

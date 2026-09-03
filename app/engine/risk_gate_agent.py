@@ -15,28 +15,24 @@ OPTIONS_INELIGIBLE_PATTERNS = ("/", "-PERP", "USDT", "/USD", "BTC", "ETH", "SOL"
 
 def compute_dynamic_options_capacity(
     cb_state: Optional[Dict[str, Any]] = None,
-    market_vix: float = 16.5,
-    open_positions: Optional[List[Dict[str, Any]]] = None,
     total_portfolio_value: float = 100_000.0,
-    options_budget_pct: float = 0.75
+    open_positions: Optional[List[Dict[str, Any]]] = None,
+    market_vix: float = 16.5,
+    options_budget_pct: float = 0.80
 ) -> Dict[str, Any]:
     """
-    Dynamically determines the maximum number of simultaneous options positions
-    and aggregate portfolio risk capacity based on:
-      1. Circuit Breaker drawdown tier (Level 0 -> full capacity down to Level 4 -> 0)
-      2. Market Volatility / VIX regime (Low vol trend vs high vol chop)
-      3. Options capital budget utilization (75% of portfolio)
-      4. Portfolio Greeks / Sector diversification
+    Dynamically scales maximum simultaneous open options positions and capital capacity
+    based on live account equity, Circuit Breaker state, and market volatility regime.
     """
-    from app.engine.performance_manager import get_current_circuit_breaker
     if cb_state is None:
         try:
+            from app.engine.performance_manager import get_current_circuit_breaker
             cb_state = get_current_circuit_breaker()
         except Exception:
-            cb_state = {"circuit_breaker_level": 0, "current_drawdown_pct": 0.0, "portfolio_value": total_portfolio_value}
+            cb_state = {"circuit_breaker_level": 0, "drawdown_pct": 0.0, "portfolio_value": total_portfolio_value}
 
     cb_level = int(cb_state.get("circuit_breaker_level", 0))
-    drawdown_pct = abs(float(cb_state.get("current_drawdown_pct", 0.0)))
+    drawdown_pct = float(cb_state.get("drawdown_pct", 0.0))
     live_val = float(cb_state.get("portfolio_value", total_portfolio_value))
 
     # 1. Base Capacity from Circuit Breaker Drawdown State
@@ -44,21 +40,21 @@ def compute_dynamic_options_capacity(
         base_capacity = 0 # Emergency pause
         regime = "EMERGENCY_HALT"
     elif cb_level == 3 or drawdown_pct >= 12.0:
-        base_capacity = 2 # Extreme caution
+        base_capacity = 4 # Extreme caution
         regime = "DEFENSIVE_MINIMAL"
     elif cb_level == 2 or drawdown_pct >= 8.0:
-        base_capacity = 4 # Moderate defensive
+        base_capacity = 8 # Moderate defensive
         regime = "CAUTIOUS"
     elif cb_level == 1 or drawdown_pct >= 5.0:
-        base_capacity = 6 # Mild reduction
+        base_capacity = 14 # Mild reduction
         regime = "MODERATE_REDUCTION"
     else:
-        base_capacity = 10 # Normal full market capacity (8 to 12 slots)
+        base_capacity = 20 # Full market capacity (scaled up to 24 slots with low VIX)
         regime = "OPTIMAL_EXPANSION"
 
     # 2. VIX / Market Regime Multiplier
     if market_vix < 16.0:
-        vix_mult = 1.2 # Strong low-vol trend, expand capacity up to 12
+        vix_mult = 1.2 # Strong low-vol trend, expand capacity up to 24
         vix_label = "Low Volatility (Trend Expansion)"
     elif market_vix <= 22.0:
         vix_mult = 1.0 # Normal regime
@@ -71,14 +67,16 @@ def compute_dynamic_options_capacity(
         vix_label = "High Volatility (Stress)"
 
     scaled_capacity = int(math.floor(base_capacity * vix_mult)) if base_capacity > 0 else 0
-    max_simultaneous = max(0, min(12, scaled_capacity))
+    max_simultaneous = max(0, min(24, scaled_capacity))
 
-    # 3. Capital Capacity Check: 75% Total Options Budget
+    # 3. Capital Capacity Check: 80% Total Options Budget
     max_options_capital = live_val * options_budget_pct
     currently_deployed = 0.0
     if open_positions:
         for p in open_positions:
-            currently_deployed += float(p.get("total_cost") or p.get("allocated_capital") or 0.0)
+            # Value deployed options capital at active market value (falling back to cost basis)
+            cost = float(p.get("market_value") or p.get("cost_basis") or p.get("total_cost") or p.get("allocated_capital") or 0.0)
+            currently_deployed += cost
 
     remaining_budget = max(0.0, max_options_capital - currently_deployed)
     budget_exhausted = remaining_budget < MIN_OPTION_TRADE_SIZE
@@ -147,7 +145,7 @@ def evaluate_options_risk_gates(
     premium_per_share = float(contract_spec.get("premium_paid", 10.0))
     underlying_px   = current_price or float(contract_spec.get("underlying_price", 0.0))
 
-    # ── 0. Dynamic AI-Driven Portfolio Capacity Limits ───────────────────────────
+    # ── 0. Dynamic AI-Driven Portfolio Capital Allocation (No static position limits) ──
     current_options = [
         p for p in open_positions
         if p.get("asset_class") == "option" or bool(p.get("option_symbol"))
@@ -156,22 +154,24 @@ def evaluate_options_risk_gates(
     cb_state = get_current_circuit_breaker()
     capacity_info = compute_dynamic_options_capacity(
         cb_state=cb_state,
-        open_positions=current_options
+        open_positions=current_options,
+        options_budget_pct=0.85
     )
-    max_simultaneous = capacity_info["max_simultaneous"]
 
-    if len(current_options) >= max_simultaneous:
+    # Emergency halt check if severe circuit breaker is active
+    if capacity_info.get("circuit_breaker_level", 0) >= 4 or capacity_info.get("regime") == "EMERGENCY_HALT":
         return {
             "approved": False,
-            "gate_failed": "Portfolio Dynamic Limit",
-            "reason": f"AI Dynamic Capacity reached: {len(current_options)}/{max_simultaneous} open options ({capacity_info['regime']} | CB Level {capacity_info['circuit_breaker_level']})."
+            "gate_failed": "Circuit Breaker Emergency Halt",
+            "reason": f"Circuit Breaker Level {capacity_info.get('circuit_breaker_level')} ({capacity_info['regime']}) active — new entries paused."
         }
 
+    # Autonomous Capital Budget Check: 85% of live portfolio equity
     if capacity_info.get("budget_exhausted"):
         return {
             "approved": False,
             "gate_failed": "Options Budget Cap",
-            "reason": f"75% Options Capital Budget fully allocated (${capacity_info['currently_deployed']:,.2f} of ${capacity_info['options_budget_cap']:,.2f}). Remaining cash is protected."
+            "reason": f"85% Options Capital Budget fully allocated (${capacity_info['currently_deployed']:,.2f} of ${capacity_info['options_budget_cap']:,.2f}). Remaining cash is protected."
         }
 
     from app.core.database import extract_underlying_ticker
@@ -332,18 +332,19 @@ def evaluate_options_risk_gates(
     contracts = int(math.floor(adjusted_budget / cost_per_contract))
     contracts = max(1, min(contracts, MAX_CONTRACTS_PER_TRADE))
 
-    # Step E: Solvency & 12% portfolio single-trade risk cap (max $12,000 on $100K portfolio)
+    # Step E: Solvency & 3.5% portfolio single-trade risk cap (max ~$3,500 on $100K portfolio)
     total_risk = premium_per_share * contracts * 100.0
-    max_portfolio_risk = live_portfolio_value * 0.12
+    max_portfolio_risk = live_portfolio_value * 0.035
 
     if total_risk > max_portfolio_risk:
         contracts = max(1, int(math.floor(max_portfolio_risk / cost_per_contract)))
         total_risk = premium_per_share * contracts * 100.0
-        if total_risk > max_portfolio_risk and contracts <= 1:
+        hard_max_risk = live_portfolio_value * 0.05
+        if total_risk > hard_max_risk and contracts <= 1:
             return {
                 "approved": False,
                 "gate_failed": "Gate 5: Portfolio Risk Cap",
-                "reason": f"1-contract minimum (${total_risk:.2f}) exceeds 10% risk cap (${max_portfolio_risk:.2f})."
+                "reason": f"1-contract minimum (${total_risk:.2f}) exceeds 5% portfolio risk cap (${hard_max_risk:.2f})."
             }
 
     total_committed = round(contracts * cost_per_contract, 2)
@@ -387,7 +388,7 @@ def evaluate_options_risk_gates(
         },
 
         "gates_passed": [
-            f"Gate 0: AI Dynamic Portfolio Capacity ({len(current_options)+1}/{max_simultaneous} slots | {capacity_info['regime']})",
+            f"Gate 0: AI Dynamic Portfolio Capital ({len(current_options)+1} active | ${capacity_info['currently_deployed']:,.0f}/${capacity_info['options_budget_cap']:,.0f} budget | {capacity_info['regime']})",
             "Gate 1: Signal Quality (>=75% confidence)",
             "Gate 2: IV Regime Filter",
             "Gate 3: DTE Window (21-45 DTE)",

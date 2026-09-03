@@ -384,16 +384,26 @@ def get_open_positions() -> List[Dict[str, Any]]:
                     sym = p.get("symbol", "")
                     und = extract_underlying_ticker(sym)
                     seen_occ.add(sym)
+                    qty = abs(float(p.get("qty", 1)))
+                    avg_px = float(p.get("avg_entry_price", 0.0))
+                    cost_b = float(p.get("cost_basis") or (avg_px * qty * (100.0 if len(sym) > 6 else 1.0)))
+                    mv = float(p.get("market_value") or (float(p.get("current_price", 0.0)) * qty * (100.0 if len(sym) > 6 else 1.0)))
                     alpaca_list.append({
                         "id": p.get("asset_id"),
                         "symbol": und,
                         "underlying_symbol": und,
                         "option_symbol": sym,
                         "asset_class": "option" if len(sym) > 6 else "equity",
-                        "quantity": abs(float(p.get("qty", 1))),
-                        "entry_price": float(p.get("avg_entry_price", 0.0)),
+                        "quantity": qty,
+                        "contracts": int(qty) if len(sym) > 6 else int(qty),
+                        "entry_price": avg_px,
                         "current_price": float(p.get("current_price", 0.0)),
+                        "cost_basis": cost_b,
+                        "total_cost": cost_b,
+                        "allocated_capital": cost_b,
+                        "market_value": mv,
                         "unrealized_pl": float(p.get("unrealized_pl", 0.0)),
+                        "unrealized_plpc": float(p.get("unrealized_plpc", 0.0)),
                         "status": "open",
                         "is_working_order": False
                     })
@@ -405,16 +415,25 @@ def get_open_positions() -> List[Dict[str, Any]]:
                     sym = o.get("symbol", "")
                     if sym not in seen_occ:
                         und = extract_underlying_ticker(sym)
+                        qty = abs(float(o.get("qty", 1)))
+                        limit_px = float(o.get("limit_price") or 0.0)
+                        cost_b = limit_px * qty * (100.0 if len(sym) > 6 else 1.0)
                         alpaca_list.append({
                             "id": o.get("id"),
                             "symbol": und,
                             "underlying_symbol": und,
                             "option_symbol": sym,
                             "asset_class": "option" if len(sym) > 6 else "equity",
-                            "quantity": abs(float(o.get("qty", 1))),
-                            "entry_price": float(o.get("limit_price") or 0.0),
-                            "current_price": float(o.get("limit_price") or 0.0),
+                            "quantity": qty,
+                            "contracts": int(qty) if len(sym) > 6 else int(qty),
+                            "entry_price": limit_px,
+                            "current_price": limit_px,
+                            "cost_basis": cost_b,
+                            "total_cost": cost_b,
+                            "allocated_capital": cost_b,
+                            "market_value": cost_b,
                             "unrealized_pl": 0.0,
+                            "unrealized_plpc": 0.0,
                             "status": "pending_order",
                             "is_working_order": True
                         })
@@ -422,52 +441,73 @@ def get_open_positions() -> List[Dict[str, Any]]:
     except Exception as e:
         print(f"[Database] Live Alpaca positions sync notice: {e}")
 
-    pool = get_pool()
-    if pool is not None:
-        try:
-            conn = pool.getconn()
-            try:
-                with conn.cursor(cursor_factory=RealDictCursor) as cur:
-                    cur.execute("""
-                        SELECT * FROM positions
-                        WHERE status = 'open'
-                        ORDER BY entry_time DESC;
-                    """)
-                    rows = cur.fetchall()
-                    return [dict(r) for r in rows]
-            finally:
-                pool.putconn(conn)
-        except Exception as e:
-            print(f"[Database] Notice on get_open_positions: {e}. Using memory state.")
-
-    return [pos for pos in _in_memory_positions.values() if pos.get("status") == "open"]
+    return []
 
 
 def is_position_open(strategy_id: str, symbol: str) -> bool:
     """
-    Returns True if an open position exists for this strategy+symbol combo.
+    Checks directly against live Alpaca open positions and working open orders.
+    Zero database calls.
     """
-    pool = get_pool()
-    if pool is not None:
-        try:
-            conn = pool.getconn()
-            try:
-                with conn.cursor() as cur:
-                    cur.execute("""
-                        SELECT 1 FROM positions
-                        WHERE strategy_id = %s AND symbol = %s AND status = 'open'
-                        LIMIT 1;
-                    """, (strategy_id, symbol.upper()))
-                    return cur.fetchone() is not None
-            finally:
-                pool.putconn(conn)
-        except Exception as e:
-            print(f"[Database] Notice on is_position_open: {e}. Using memory state.")
-
-    for pos in _in_memory_positions.values():
-        if pos.get("strategy_id") == strategy_id and pos.get("symbol") == symbol.upper() and pos.get("status") == "open":
-            return True
+    clean_sym = symbol.upper().replace("/", "")
+    try:
+        live_pos = get_open_positions()
+        for p in live_pos:
+            p_sym = str(p.get("symbol") or p.get("underlying_symbol") or "").upper().replace("/", "")
+            p_occ = str(p.get("option_symbol") or "").upper()
+            if p_sym == clean_sym or p_occ.startswith(clean_sym):
+                return True
+    except Exception as e:
+        print(f"[Database] Live position check notice: {e}")
     return False
+
+
+def get_order_history(limit: int = 50, status: str = "all") -> List[Dict[str, Any]]:
+    """
+    Fetches live order history directly from Alpaca Broker API (/v2/orders).
+    Zero database calls.
+    """
+    try:
+        from dotenv import load_dotenv
+        import os, requests
+        load_dotenv(override=True)
+        alpaca_key = os.getenv("ALPACA_API_KEY")
+        alpaca_sec = os.getenv("ALPACA_API_SECRET")
+        alpaca_base = (os.getenv("ALPACA_BASE_URL") or "https://paper-api.alpaca.markets/v2").rstrip("/")
+
+        if alpaca_key and alpaca_sec:
+            headers = {"APCA-API-KEY-ID": alpaca_key, "APCA-API-SECRET-KEY": alpaca_sec}
+            params = {"status": status, "limit": limit, "direction": "desc"}
+            r = requests.get(f"{alpaca_base}/orders", headers=headers, params=params, timeout=8)
+            if r.status_code == 200:
+                orders = r.json()
+                parsed = []
+                for o in orders:
+                    sym = o.get("symbol", "")
+                    und = extract_underlying_ticker(sym)
+                    parsed.append({
+                        "id": o.get("id"),
+                        "client_order_id": o.get("client_order_id"),
+                        "symbol": und,
+                        "underlying_symbol": und,
+                        "option_symbol": sym,
+                        "asset_class": "option" if len(sym) > 6 else "equity",
+                        "side": (o.get("side") or "").upper(),
+                        "type": (o.get("type") or "").upper(),
+                        "qty": float(o.get("qty") or 0.0),
+                        "filled_qty": float(o.get("filled_qty") or 0.0),
+                        "limit_price": float(o.get("limit_price") or 0.0),
+                        "filled_avg_price": float(o.get("filled_avg_price") or 0.0) if o.get("filled_avg_price") else None,
+                        "status": (o.get("status") or "").lower(),
+                        "created_at": o.get("created_at") or o.get("submitted_at"),
+                        "filled_at": o.get("filled_at"),
+                        "canceled_at": o.get("canceled_at"),
+                        "order_class": o.get("order_class")
+                    })
+                return parsed
+    except Exception as e:
+        print(f"[Database] Live Alpaca order history notice: {e}")
+    return []
 
 
 def get_portfolio_summary(current_prices: Optional[Dict[str, float]] = None) -> Dict[str, Any]:
@@ -486,7 +526,7 @@ def get_portfolio_summary(current_prices: Optional[Dict[str, float]] = None) -> 
     strategies_active = set()
 
     for p in open_positions:
-        alloc = float(p.get("allocated_capital") or 0.0)
+        alloc = float(p.get("allocated_capital") or p.get("cost_basis") or p.get("total_cost") or 0.0)
         total_allocated += alloc
         strat = p.get("strategy_id")
         if strat:
@@ -498,9 +538,18 @@ def get_portfolio_summary(current_prices: Optional[Dict[str, float]] = None) -> 
 
         is_option = (p.get("asset_class") == "option") or bool(p.get("option_symbol"))
 
+        # If broker already provides exact real-time unrealized PnL, use it directly
+        if p.get("unrealized_pl") is not None and abs(float(p.get("unrealized_pl") or 0.0)) > 0:
+            unrealized_pnl += float(p["unrealized_pl"])
+            if is_option:
+                options_count += 1
+            else:
+                crypto_count += 1
+            continue
+
         if is_option:
             options_count += 1
-            contracts = int(p.get("contracts") or 1)
+            contracts = int(p.get("contracts") or p.get("quantity") or 1)
             strike = float(p.get("strike_price") or entry_p)
             exp_date = p.get("expiration_date")
             opt_type = p.get("option_type") or "call"
@@ -524,7 +573,7 @@ def get_portfolio_summary(current_prices: Optional[Dict[str, float]] = None) -> 
             try:
                 from app.engine.options_pricing import BlackScholesEngine
                 live_opt_prem = BlackScholesEngine.calculate_option_price(
-                    S=curr_p,
+                    S=curr_p if curr_p != entry_p else strike,
                     K=strike,
                     T=T,
                     r=0.045,

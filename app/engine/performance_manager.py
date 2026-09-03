@@ -204,8 +204,8 @@ def get_portfolio_budget_breakdown(
         active_options = equity * 0.75
 
     cash_reserve = equity - active_options
-    high_conviction = min(12_000.0, max(2_500.0, equity * 0.12))
-    medium_conviction = min(8_000.0, max(1_500.0, equity * 0.08))
+    high_conviction = min(4_500.0, max(1_500.0, equity * 0.045))
+    medium_conviction = min(3_000.0, max(1_000.0, equity * 0.030))
     options_reserve = active_options * 0.25
 
     return {
@@ -543,9 +543,9 @@ def get_dynamic_allocation(
         groq_confidence=groq_confidence
     )
     active_base = breakdown["active_options_budget"]
-    base_allocation = active_base * max(quarter_kelly, 0.08)
-    base_allocation = max(base_allocation, active_base * 0.06)   # floor 6% (~$4,500 on $75k)
-    base_allocation = min(base_allocation, active_base * 0.16)   # ceiling 16% (~$12,000)
+    base_allocation = active_base * max(quarter_kelly, 0.025)
+    base_allocation = max(base_allocation, portfolio_value * 0.020)   # floor 2.0% (~$1,800 on $88k)
+    base_allocation = min(base_allocation, portfolio_value * 0.040)   # ceiling 4.0% (~$3,500 on $88k)
 
     # 4. Volatility ratio
     vol_ratio = 1.0

@@ -120,6 +120,8 @@ def run_options_monitor_cycle(
             iv = iv / 100.0
 
         # Primary: Fetch real-time live market quote (Midpoint) directly from Alpaca
+        live_opt_prem = None
+        greeks = None
         try:
             from app.execution.options_executor import inspect_option_contract
             quote = inspect_option_contract(occ_symbol, underlying_symbol=sym)
@@ -131,11 +133,18 @@ def run_options_monitor_cycle(
                     "gamma": float(quote.get("gamma") or 0.01),
                     "vega": float(quote.get("vega") or 0.15)
                 }
-            else:
-                raise ValueError("Quote snapshot fallback to Black-Scholes")
-        except Exception:
+        except Exception as e:
+            pass
+
+        # Secondary: Use official broker mark price (Alpaca current_price) if live snapshot unavailable
+        broker_px = float(p.get("current_price") or 0.0)
+        if (live_opt_prem is None or live_opt_prem <= 0) and broker_px > 0:
+            live_opt_prem = broker_px
+
+        # Tertiary: Calculate via Black-Scholes only if broker mark is also unavailable
+        if live_opt_prem is None or live_opt_prem <= 0 or greeks is None:
             try:
-                greeks = BlackScholesEngine.calculate_greeks(
+                calc_greeks = BlackScholesEngine.calculate_greeks(
                     S=underlying_px,
                     K=strike,
                     T=T,
@@ -143,10 +152,15 @@ def run_options_monitor_cycle(
                     sigma=iv,
                     option_type=opt_type
                 )
-                live_opt_prem = max(0.05, float(greeks.get("price", entry_prem)))
+                if live_opt_prem is None or live_opt_prem <= 0:
+                    live_opt_prem = max(0.05, float(calc_greeks.get("price", entry_prem)))
+                if greeks is None:
+                    greeks = calc_greeks
             except Exception:
-                live_opt_prem = entry_prem
-                greeks = {"delta": 0.70, "theta": -0.10, "gamma": 0.01, "vega": 0.15}
+                if live_opt_prem is None or live_opt_prem <= 0:
+                    live_opt_prem = entry_prem
+                if greeks is None:
+                    greeks = {"delta": 0.70, "theta": -0.10, "gamma": 0.01, "vega": 0.15}
 
         # Safety Guard: An option premium cannot exceed the underlying stock price for OTM/ATM calls
         if live_opt_prem >= underlying_px and strike > 0:

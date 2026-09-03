@@ -479,39 +479,26 @@ def get_dashboard_telemetry():
         except Exception as e:
             print(f"[Dashboard] Alpaca activities fetch notice: {e}")
 
-    # 4b. If Alpaca has no fills, query PostgreSQL positions table
-    if (wins + losses) == 0:
+    # 4b. If no fills from activities, query Alpaca order history directly (Zero DB calls)
+    if not recent_trades:
         try:
-            pool = get_pool()
-            if pool is not None:
-                conn = pool.getconn()
-                try:
-                    with conn.cursor() as cur:
-                        cur.execute("""
-                            SELECT exit_time, symbol, signal_type, quantity, exit_price, realized_pnl, exit_reason
-                            FROM positions WHERE status = 'closed' ORDER BY id DESC LIMIT 15;
-                        """)
-                        for r in cur.fetchall():
-                            t_str = r[0].strftime("%H:%M:%S") if r[0] else "14:28:41"
-                            pnl_val = float(r[5] or 0.0)
-                            recent_trades.append({
-                                "time": t_str,
-                                "symbol": r[1] or "SPY",
-                                "type": "SELL TO CLOSE" if "LONG" in str(r[2]) else "BUY TO CLOSE",
-                                "qty": int(r[3] or 1),
-                                "price": round(float(r[4] or 0.0), 2),
-                                "pnl": round(pnl_val, 2),
-                                "reason": r[6] or "Profit Target"
-                            })
-                            if pnl_val > 0:
-                                wins += 1
-                                gross_profit += pnl_val
-                            else:
-                                losses += 1
-                                gross_loss += abs(pnl_val)
-                            realized_pnl += pnl_val
-                finally:
-                    pool.putconn(conn)
+            from app.core.database import get_order_history
+            orders_hist = get_order_history(limit=15, status="all")
+            for o in orders_hist:
+                s = o.get("option_symbol") or o.get("symbol")
+                side_action = "BUY TO OPEN" if o.get("side") == "BUY" else "SELL TO CLOSE"
+                t_sub = o.get("created_at") or ""
+                t_str = t_sub[11:19] if len(t_sub) >= 19 else "14:28:41"
+                fill_px = float(o.get("filled_avg_price") or o.get("limit_price") or 0.0)
+                recent_trades.append({
+                    "time": t_str,
+                    "symbol": s,
+                    "type": side_action,
+                    "qty": int(o.get("filled_qty") or o.get("qty") or 1),
+                    "price": round(fill_px, 2),
+                    "pnl": 0.0,
+                    "reason": f"Alpaca Order ({o.get('status', 'filled')})"
+                })
         except Exception:
             pass
 

@@ -219,41 +219,13 @@ def get_agent_status():
 
 @router.get("/positions")
 def get_all_positions(status: Optional[str] = None):
-    """Returns position history from PostgreSQL enriched with live price, Greeks, and unrealized PnL."""
-    all_snaps = get_all_snapshots()
-    try:
-        pool = get_pool()
-        if pool is not None:
-            conn = pool.getconn()
-            try:
-                with conn.cursor() as cur:
-                    if status:
-                        cur.execute(
-                            "SELECT * FROM positions WHERE status = %s ORDER BY id DESC LIMIT 50;",
-                            (status.lower(),)
-                        )
-                    else:
-                        cur.execute("SELECT * FROM positions ORDER BY id DESC LIMIT 50;")
-                    cols = [desc[0] for desc in cur.description]
-                    rows = cur.fetchall()
-                    unique_syms = list(set([dict(zip(cols, r)).get("symbol") for r in rows if dict(zip(cols, r)).get("symbol")]))
-                    live_prices = fetch_alpaca_latest_prices(unique_syms)
+    """Returns live positions and order history directly from Alpaca API (Zero DB calls)."""
+    if status and status.lower() in ["closed", "history", "filled"]:
+        from app.core.database import get_order_history
+        return get_order_history(limit=50, status="all")
 
-                    results = []
-                    for r in rows:
-                        p_dict = dict(zip(cols, r))
-                        enriched = _enrich_position(p_dict, live_prices, all_snaps)
-                        results.append(enriched)
-                        
-                    return results
-            finally:
-                pool.putconn(conn)
-    except Exception as e:
-        print(f"[AgentRouter] Notice on get_all_positions: {e}")
-
-    # Memory fallback
-    open_pos = get_open_positions()
-    return open_pos
+    from app.core.database import get_open_positions
+    return get_open_positions()
 
 
 

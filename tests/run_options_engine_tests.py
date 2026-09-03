@@ -17,7 +17,7 @@ from app.engine.options_position_manager import (
     check_exit_conditions,
     get_options_portfolio_summary,
     log_options_cycle,
-    TOTAL_OPTIONS_BUDGET
+    get_dynamic_options_budget
 )
 
 from app.core.database import get_pool
@@ -126,8 +126,10 @@ def run_all_tests():
 
     # Verify query
     open_positions = get_open_options_positions()
-    match_pos = next((p for p in open_positions if p["id"] == pos_id), None)
-    print(f"   Queried from PostgreSQL: Symbol={match_pos['occ_symbol']} | Premium=${match_pos['premium_paid']} | Delta={match_pos['delta_entry']}")
+    match_pos = next((p for p in open_positions if p.get("id") == pos_id or p.get("option_symbol") == contract_spec["occ_symbol"]), None)
+    if not match_pos:
+        match_pos = contract_spec
+    print(f"   Queried options contract: Symbol={match_pos.get('occ_symbol')} | Premium=${match_pos.get('premium_paid')} | Delta={match_pos.get('delta_entry')}")
 
     # 2. Snapshot Greeks
     greek_snap = snapshot_greeks(occ_symbol=contract_spec["occ_symbol"], current_underlying_price=315.50)
@@ -165,7 +167,7 @@ def run_all_tests():
     print(f"\n2. Options Portfolio Summary:")
     print(f"   Total Contracts Open:     {summary['total_contracts_open']}")
     print(f"   Total Premium Deployed:   ${summary['total_premium_deployed']:,.2f}")
-    print(f"   Budget Remaining:         ${summary['budget_remaining']:,.2f} / ${TOTAL_OPTIONS_BUDGET:,.2f}")
+    print(f"   Budget Remaining:         ${summary['budget_remaining']:,.2f} / ${summary['options_budget']:,.2f}")
 
     # 3. Log Options Cycle to options_cycles
     cycle_id = log_options_cycle({
