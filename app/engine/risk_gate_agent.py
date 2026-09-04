@@ -36,38 +36,35 @@ def compute_dynamic_options_capacity(
     live_val = float(cb_state.get("portfolio_value", total_portfolio_value))
 
     # 1. Base Capacity from Circuit Breaker Drawdown State
-    if cb_level >= 4 or drawdown_pct >= 15.0:
-        base_capacity = 0 # Emergency pause
+    if cb_level >= 3 or drawdown_pct >= 10.0:
+        base_capacity = 0 # Emergency pause / capital protection
         regime = "EMERGENCY_HALT"
-    elif cb_level == 3 or drawdown_pct >= 12.0:
-        base_capacity = 4 # Extreme caution
+    elif cb_level == 2 or drawdown_pct >= 7.0:
+        base_capacity = 3 # Extreme caution / defensive
         regime = "DEFENSIVE_MINIMAL"
-    elif cb_level == 2 or drawdown_pct >= 8.0:
-        base_capacity = 8 # Moderate defensive
-        regime = "CAUTIOUS"
-    elif cb_level == 1 or drawdown_pct >= 5.0:
-        base_capacity = 14 # Mild reduction
+    elif cb_level == 1 or drawdown_pct >= 4.0:
+        base_capacity = 5 # Moderate reduction
         regime = "MODERATE_REDUCTION"
     else:
-        base_capacity = 20 # Full market capacity (scaled up to 24 slots with low VIX)
+        base_capacity = 8 # Disciplined normal capacity (8 positions max)
         regime = "OPTIMAL_EXPANSION"
 
     # 2. VIX / Market Regime Multiplier
     if market_vix < 16.0:
-        vix_mult = 1.2 # Strong low-vol trend, expand capacity up to 24
+        vix_mult = 1.25 # Expands base 8 -> 10 max
         vix_label = "Low Volatility (Trend Expansion)"
     elif market_vix <= 22.0:
         vix_mult = 1.0 # Normal regime
         vix_label = "Normal Volatility"
     elif market_vix <= 30.0:
-        vix_mult = 0.7 # Elevated volatility
+        vix_mult = 0.6 # Elevated volatility
         vix_label = "Elevated Volatility (Choppy)"
     else:
-        vix_mult = 0.4 # Extreme market stress
+        vix_mult = 0.0 # Extreme market stress
         vix_label = "High Volatility (Stress)"
 
     scaled_capacity = int(math.floor(base_capacity * vix_mult)) if base_capacity > 0 else 0
-    max_simultaneous = max(0, min(24, scaled_capacity))
+    max_simultaneous = max(0, min(10, scaled_capacity))
 
     # 3. Capital Capacity Check: 80% Total Options Budget
     max_options_capital = live_val * options_budget_pct
@@ -124,7 +121,7 @@ def evaluate_options_risk_gates(
     real-time market regime, circuit breaker drawdown tier, Kelly criterion, and options capital budget.
 
     Gates:
-      0. AI Dynamic Portfolio Capacity — dynamically scales between 0-12 positions based on CB & VIX, max 1 per underlying
+      0. AI Dynamic Portfolio Capacity — dynamically scales between 0-10 positions based on CB & VIX, max 1 per underlying
       1. Signal Quality                 — confidence >= 75%
       2. IV Regime                      — IV rank < 35 (full), 35-55 (half), >55 (block long options)
       3. DTE Window                     — 21 <= DTE <= 45
@@ -145,11 +142,13 @@ def evaluate_options_risk_gates(
     premium_per_share = float(contract_spec.get("premium_paid", 10.0))
     underlying_px   = current_price or float(contract_spec.get("underlying_price", 0.0))
 
-    # ── 0. Dynamic AI-Driven Portfolio Capital Allocation (No static position limits) ──
-    current_options = [
-        p for p in open_positions
-        if p.get("asset_class") == "option" or bool(p.get("option_symbol"))
-    ]
+    # ── 0. Dynamic AI-Driven Portfolio Capital Allocation (Strict Capacity & Budget Limits) ──
+    def _is_option(p):
+        ac = str(p.get("asset_class") or "").lower()
+        sym = str(p.get("option_symbol") or p.get("symbol") or "")
+        return ac in ["option", "us_option"] or len(sym) > 6 or bool(p.get("option_symbol"))
+
+    current_options = [p for p in open_positions if _is_option(p)]
     
     cb_state = get_current_circuit_breaker()
     capacity_info = compute_dynamic_options_capacity(
@@ -158,19 +157,28 @@ def evaluate_options_risk_gates(
         options_budget_pct=0.85
     )
 
-    # Emergency halt check if severe circuit breaker is active
-    if capacity_info.get("circuit_breaker_level", 0) >= 4 or capacity_info.get("regime") == "EMERGENCY_HALT":
+    # 0a. Emergency halt check if severe circuit breaker is active (Level 3 or 4)
+    if capacity_info.get("circuit_breaker_level", 0) >= 3 or capacity_info.get("regime") == "EMERGENCY_HALT":
         return {
             "approved": False,
-            "gate_failed": "Circuit Breaker Emergency Halt",
-            "reason": f"Circuit Breaker Level {capacity_info.get('circuit_breaker_level')} ({capacity_info['regime']}) active — new entries paused."
+            "gate_failed": "Gate 0: Circuit Breaker Emergency Halt",
+            "reason": f"Circuit Breaker Level {capacity_info.get('circuit_breaker_level')} ({capacity_info['regime']}) active — new entries paused to protect capital."
         }
 
-    # Autonomous Capital Budget Check: 85% of live portfolio equity
+    # 0b. Strict Simultaneous Options Position Cap (Max 8-10 in normal, 0-4 in drawdowns)
+    max_simultaneous = capacity_info.get("max_simultaneous", 8)
+    if len(current_options) >= max_simultaneous:
+        return {
+            "approved": False,
+            "gate_failed": "Gate 0: Dynamic Capacity Limit Reached",
+            "reason": f"Active options ({len(current_options)}) reached dynamic capacity limit ({max_simultaneous}) for regime {capacity_info['regime']} (CB Level {capacity_info.get('circuit_breaker_level')})."
+        }
+
+    # 0c. Autonomous Capital Budget Check: 85% of live portfolio equity
     if capacity_info.get("budget_exhausted"):
         return {
             "approved": False,
-            "gate_failed": "Options Budget Cap",
+            "gate_failed": "Gate 0: Options Budget Cap",
             "reason": f"85% Options Capital Budget fully allocated (${capacity_info['currently_deployed']:,.2f} of ${capacity_info['options_budget_cap']:,.2f}). Remaining cash is protected."
         }
 
@@ -184,7 +192,7 @@ def evaluate_options_risk_gates(
     if underlying_held:
         return {
             "approved": False,
-            "gate_failed": "Underlying Exposure",
+            "gate_failed": "Gate 0: Underlying Exposure Diversification",
             "reason": f"{symbol} already has an active options position or working open order. Max 1 per underlying to maintain diversification."
         }
 

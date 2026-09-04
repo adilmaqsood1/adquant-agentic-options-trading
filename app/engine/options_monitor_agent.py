@@ -35,9 +35,14 @@ def run_options_monitor_cycle(
     """
     open_pos = get_open_positions()
     # ONLY monitor filled active positions — NEVER monitor pending working limit orders
+    def _is_option(p):
+        ac = str(p.get("asset_class") or "").lower()
+        sym = str(p.get("option_symbol") or p.get("symbol") or "")
+        return ac in ["option", "us_option"] or len(sym) > 6 or bool(p.get("option_symbol"))
+
     options_pos = [
         p for p in open_pos 
-        if (p.get("asset_class") == "option" or bool(p.get("option_symbol"))) 
+        if _is_option(p)
         and not p.get("is_working_order") 
         and p.get("status") != "pending_order"
     ]

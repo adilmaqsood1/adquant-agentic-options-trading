@@ -208,12 +208,16 @@ def risk_node(state: AgentState) -> AgentState:
     print(f"[Confluence] Detected {len(raw_confluence_pool)} unique setups ({len(confluence_pool)} unheld & eligible) across {len(fired_signals)} triggers.")
 
     # 2. DeepSeek-V3.2 Opportunity Tournament Ranking
-    # Dynamically select highest-conviction candidates based on remaining 85% options capital budget
-    if capacity_info.get("budget_exhausted"):
+    # Dynamically select highest-conviction candidates based on remaining slots and 85% options budget
+    cb_lvl = capacity_info.get("circuit_breaker_level", 0)
+    max_simultaneous = capacity_info.get("max_simultaneous", 8)
+    slots_free = max(0, max_simultaneous - len(current_open_pos))
+
+    if capacity_info.get("budget_exhausted") or cb_lvl >= 3 or slots_free <= 0:
         target_selection_count = 0
     else:
         rem_budget = float(capacity_info.get("remaining_budget", 5000.0))
-        target_selection_count = min(len(confluence_pool), max(3, min(8, int(rem_budget / 1500.0))))
+        target_selection_count = min(len(confluence_pool), min(slots_free, max(1, min(8, int(rem_budget / 1500.0)))))
 
     tournament = rank_opportunities_tournament(
         confluence_pool=confluence_pool,

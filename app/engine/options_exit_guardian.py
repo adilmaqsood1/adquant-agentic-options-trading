@@ -65,9 +65,9 @@ def evaluate_position_exit_with_ai(
             "reasoning": f"Persisted trailing stop price hit (${current_prem:.2f} <= ${trail_prem:.2f}). Closed to preserve profits."
         }
 
-    # B. Hard Stop-Loss (-35% single leg, -50% spreads)
-    hard_stop_thresh = -50.0 if "spread" in strategy_type else -35.0
-    if pnl_pct <= hard_stop_thresh:
+    # B. Hard Stop-Loss (-50% single leg, -60% spreads)
+    hard_stop_thresh = -60.0 if "spread" in strategy_type else -50.0
+    if pnl_pct <= hard_stop_thresh and current_prem > 0.05:
         return {
             "should_close": True,
             "action": "HARD_STOP_LOSS",
@@ -75,7 +75,7 @@ def evaluate_position_exit_with_ai(
             "exit_premium": current_prem,
             "pnl_pct": round(pnl_pct, 2),
             "confidence": 100,
-            "reasoning": f"Non-negotiable hard stop loss triggered ({pnl_pct:.1f}% <= {hard_stop_thresh}%). Position closed immediately to protect capital."
+            "reasoning": f"Non-negotiable hard stop loss triggered ({pnl_pct:.1f}% <= {hard_stop_thresh}%). Position closed to protect remaining capital."
         }
 
     # C. Hard Time-Stop (<= 7 DTE for single leg, <= 14 DTE for spreads)

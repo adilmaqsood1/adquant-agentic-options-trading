@@ -359,11 +359,14 @@ def extract_underlying_ticker(sym: str) -> str:
     return sym.upper()
 
 
+_last_known_positions: List[Dict[str, Any]] = []
+
 def get_open_positions() -> List[Dict[str, Any]]:
     """
     Returns live open positions AND working open orders directly from Alpaca Broker API when connected,
-    falling back to database / in-memory ledger.
+    falling back to cached positions or in-memory ledger. Never returns empty list on network timeouts.
     """
+    global _last_known_positions
     try:
         from dotenv import load_dotenv
         import os, requests
@@ -377,8 +380,8 @@ def get_open_positions() -> List[Dict[str, Any]]:
             alpaca_list = []
             seen_occ = set()
 
-            # 1. Filled Active Positions
-            r_pos = requests.get(f"{alpaca_base}/positions", headers=headers, timeout=8)
+            # 1. Filled Active Positions (Timeout 15s to handle network latency)
+            r_pos = requests.get(f"{alpaca_base}/positions", headers=headers, timeout=15)
             if r_pos.status_code == 200:
                 for p in r_pos.json():
                     sym = p.get("symbol", "")
@@ -409,7 +412,7 @@ def get_open_positions() -> List[Dict[str, Any]]:
                     })
 
             # 2. Working / Pending Open Orders
-            r_ord = requests.get(f"{alpaca_base}/orders?status=open", headers=headers, timeout=8)
+            r_ord = requests.get(f"{alpaca_base}/orders?status=open", headers=headers, timeout=15)
             if r_ord.status_code == 200:
                 for o in r_ord.json():
                     sym = o.get("symbol", "")
@@ -437,10 +440,16 @@ def get_open_positions() -> List[Dict[str, Any]]:
                             "status": "pending_order",
                             "is_working_order": True
                         })
+            if alpaca_list:
+                _last_known_positions = list(alpaca_list)
             return alpaca_list
     except Exception as e:
-        print(f"[Database] Live Alpaca positions sync notice: {e}")
+        print(f"[Database] Live Alpaca positions sync notice: {e}. Preserving last known positions.")
+        if _last_known_positions:
+            return list(_last_known_positions)
 
+    if _last_known_positions:
+        return list(_last_known_positions)
     return []
 
 
